@@ -7,10 +7,16 @@ graceful fallback instead so the rest of the app keeps working offline.
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import ollama
 
 MODEL = os.environ.get("BUDGET_OLLAMA_MODEL", "gemma4:latest")
+
+# How many classification batches to send to Ollama at once. Batches are
+# independent, so overlapping them hides per-request latency; the local model
+# still serialises actual inference, so very high values give little extra.
+_MAX_CONCURRENCY = max(1, int(os.environ.get("BUDGET_OLLAMA_CONCURRENCY", "4")))
 
 
 def _chat_json(messages):
@@ -135,12 +141,17 @@ def categorize_spending(expenses):
     totals = {}
     transactions = {}
     failed_batches = 0
-    total_batches = 0
 
-    for start in range(0, len(items), _BATCH_SIZE):
-        batch = items[start:start + _BATCH_SIZE]
-        total_batches += 1
-        pairs = _classify_batch(batch)
+    batches = [items[start:start + _BATCH_SIZE]
+               for start in range(0, len(items), _BATCH_SIZE)]
+    total_batches = len(batches)
+
+    # Run the independent batches concurrently; each Ollama call is blocking
+    # I/O, so a small thread pool overlaps the per-request round-trips.
+    with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENCY, total_batches)) as pool:
+        results = pool.map(_classify_batch, batches)
+
+    for batch, pairs in zip(batches, results):
         if pairs is None:
             failed_batches += 1
             pairs = [(t, t["category"] or "Other") for t in batch]
