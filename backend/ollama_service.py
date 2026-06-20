@@ -44,25 +44,59 @@ STANDARD_CATEGORIES = [
 _BATCH_SIZE = 20
 
 
+# Hints that map common German banking/merchant vocabulary to categories. The
+# model often defaults everything to "Other" without concrete examples, so we
+# spell out the kind of German terms it will actually see.
+_CATEGORY_HINTS = (
+    "- Groceries: supermarkets & food shops such as REWE, EDEKA, ALDI, LIDL, "
+    "PENNY, NETTO, Kaufland, DM, Rossmann, Bäckerei, Metzgerei.\n"
+    "- Rent: Miete, Mietzahlung, Kaltmiete, Warmmiete, payments to a Vermieter/"
+    "Hausverwaltung.\n"
+    "- Utilities: Strom, Gas, Wasser, Stadtwerke, Telekom, Vodafone, O2, "
+    "1&1, GEZ/Rundfunkbeitrag, Internet, Handy/Mobilfunk.\n"
+    "- Transport: Deutsche Bahn (DB), BVG, MVG, VVS, Tankstelle, Aral, Shell, "
+    "Esso, Total, Uber, FREENOW, Flixbus, Parkhaus, Deutschlandticket.\n"
+    "- Dining: Restaurant, Café, Bar, Imbiss, McDonald's, Burger King, "
+    "Lieferando, Wolt, Uber Eats, Starbucks.\n"
+    "- Shopping: Amazon, Zalando, MediaMarkt, Saturn, IKEA, H&M, Zara, "
+    "Otto, clothing/electronics/home stores.\n"
+    "- Health: Apotheke, Arzt, Praxis, Zahnarzt, Krankenkasse (AOK, TK, "
+    "Barmer), Fitnessstudio, McFit.\n"
+    "- Entertainment: Kino, Konzert, Steam, PlayStation, Eventim, museums, games.\n"
+    "- Subscriptions: Netflix, Spotify, Disney+, Amazon Prime, YouTube "
+    "Premium, Audible, recurring monthly memberships.\n"
+    "- Education: Uni, Universität, Hochschule, Studienbeitrag, Semesterbeitrag, "
+    "books, courses, Udemy.\n"
+    "- Cash: Bargeld, Geldautomat, ATM, Auszahlung, Barabhebung.\n"
+    "- Fees: Gebühr, Kontoführung, Entgelt, Zinsen, Bankgebühr.\n"
+    "- Other: only when nothing above plausibly fits."
+)
+
+
 def _classify_batch(batch):
     """Return a list of (transaction, category) for one batch, or None on failure."""
     listing = [
-        {"i": i, "text": (t["description"] or t["category"])[:90]}
+        {"i": i, "text": (t["description"] or t["category"])[:140]}
         for i, t in enumerate(batch)
     ]
     prompt = (
-        "Assign each transaction below to exactly one category from this list:\n"
+        "These are German bank transactions; the descriptions are in German and "
+        "contain German merchant names, banking terms and abbreviations.\n\n"
+        "Assign each transaction to exactly one category from this list:\n"
         f"{', '.join(STANDARD_CATEGORIES)}.\n\n"
+        "Use these hints to recognise common German merchants and terms:\n"
+        f"{_CATEGORY_HINTS}\n\n"
         "Transactions (JSON):\n"
         f"{json.dumps(listing, ensure_ascii=False)}\n\n"
         'Respond with JSON of the form {"assignments": [{"i": 0, '
         '"category": "Groceries"}, ...]} covering every transaction index. '
-        "Use 'Other' if nothing fits."
+        "Pick the single best fit and only use 'Other' as a last resort when no "
+        "other category is plausible."
     )
     result = _chat_json(
         [
-            {"role": "system", "content": "You categorize bank transactions. "
-             "Reply with JSON only."},
+            {"role": "system", "content": "You categorize German bank "
+             "transactions into spending categories. Reply with JSON only."},
             {"role": "user", "content": prompt},
         ]
     )

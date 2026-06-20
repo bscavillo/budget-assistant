@@ -185,15 +185,16 @@ async function loadSummary() {
   }
   for (const cat of summary.categories) {
     const li = document.createElement("li");
+    li.className = "flex flex-col items-stretch border-b border-line py-2 text-[0.9rem]";
     const pct = cat.limit ? Math.min(100, (cat.spent / cat.limit) * 100) : 0;
     const over = cat.limit !== null && cat.spent > cat.limit;
     const limitText = cat.limit !== null
       ? ` / ${euro.format(cat.limit)}${over ? ` (${t("overBudget")})` : ""}`
       : "";
     li.innerHTML = `
-      <div class="line"><span>${escapeHtml(cat.category)}</span>
+      <div class="flex justify-between"><span>${escapeHtml(cat.category)}</span>
         <span>${euro.format(cat.spent)}${limitText}</span></div>
-      ${cat.limit !== null ? `<div class="bar ${over ? "over" : ""}" style="width:${pct}%"></div>` : ""}
+      ${cat.limit !== null ? `<div class="mt-1.5 h-1.5 rounded-[3px] ${over ? "bg-expense" : "bg-accent"}" style="width:${pct}%"></div>` : ""}
     `;
     breakdown.appendChild(li);
   }
@@ -366,8 +367,10 @@ el("import-form").addEventListener("submit", async (e) => {
   }
 });
 
-el("analyze-btn").addEventListener("click", async () => {
+async function analyzeSpending() {
   const status = el("analyze-status");
+  const btn = el("analyze-btn");
+  btn.disabled = true;
   status.textContent = t("analyzing");
   try {
     const data = await api(`/api/categorized-spending?month=${currentMonth()}`);
@@ -380,11 +383,20 @@ el("analyze-btn").addEventListener("click", async () => {
     }
   } catch (err) {
     status.textContent = err.message;
+  } finally {
+    btn.disabled = false;
   }
-});
+}
 
-monthSelect.addEventListener("change", loadSummary);
-yearSelect.addEventListener("change", loadSummary);
+el("analyze-btn").addEventListener("click", analyzeSpending);
+
+function onMonthYearChange() {
+  loadSummary();
+  analyzeSpending();
+}
+
+monthSelect.addEventListener("change", onMonthYearChange);
+yearSelect.addEventListener("change", onMonthYearChange);
 
 // --- Init -----------------------------------------------------------------
 
@@ -399,6 +411,7 @@ async function init() {
     /* fall back to the current month */
   }
   refreshAll();
+  analyzeSpending();
 }
 
 init();

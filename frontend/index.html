@@ -4,71 +4,121 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Budget Assistant</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/vendor/tailwind.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: "#0f172a",
+            panel: "#1e293b",
+            "panel-soft": "#273449",
+            ink: "#e2e8f0",
+            muted: "#94a3b8",
+            accent: "#38bdf8",
+            income: "#4ade80",
+            expense: "#f87171",
+            line: "#334155",
+          },
+        },
+      },
+    };
+  </script>
+  <style type="text/tailwindcss">
+    @layer components {
+      .field {
+        @apply px-2.5 py-2 rounded-lg border border-line bg-panel-soft text-ink;
+      }
+      .field:focus {
+        @apply outline outline-2 outline-accent;
+      }
+      .btn {
+        @apply cursor-pointer px-2.5 py-2 rounded-lg border-0 bg-accent font-semibold text-[#06283d] hover:brightness-110;
+      }
+      .lang-btn {
+        @apply cursor-pointer rounded-md border-0 bg-transparent px-1.5 py-0.5 font-semibold text-muted;
+      }
+      .lang-btn.active {
+        @apply bg-panel-soft text-accent;
+      }
+      .meta {
+        @apply text-sm text-muted;
+      }
+    }
+  </style>
 </head>
-<body>
-  <header>
-    <h1>Budget Assistant</h1>
-    <div class="header-right">
-      <div class="lang-switch" id="lang-switch">
-        <button data-lang="de" class="active">DE</button>
-        <span class="pipe">|</span>
-        <button data-lang="en">EN</button>
+<body class="m-0 bg-bg font-sans leading-normal text-ink">
+  <header class="flex flex-wrap items-center justify-between border-b border-line px-8 py-4 max-[760px]:px-4">
+    <h1 class="m-0 text-2xl">Budget Assistant</h1>
+    <div class="flex flex-wrap items-center gap-6">
+      <div class="flex items-center gap-1.5" id="lang-switch">
+        <button data-lang="de" class="lang-btn active">DE</button>
+        <span class="text-line">|</span>
+        <button data-lang="en" class="lang-btn">EN</button>
       </div>
-      <div class="date-picker">
-        <select id="month-select" aria-label="Month"></select>
-        <select id="year-select" aria-label="Year"></select>
+      <div class="flex items-center gap-2">
+        <select id="month-select" class="field min-w-28" aria-label="Month"></select>
+        <select id="year-select" class="field min-w-28" aria-label="Year"></select>
       </div>
     </div>
   </header>
 
-  <main>
-    <section class="cards" id="summary-cards">
-      <div class="card income"><span data-i18n="income">Einnahmen</span><strong id="card-income">–</strong></div>
-      <div class="card expense"><span data-i18n="expenses">Ausgaben</span><strong id="card-expense">–</strong></div>
-      <div class="card balance"><span data-i18n="balance">Saldo</span><strong id="card-balance">–</strong></div>
+  <main class="mx-auto max-w-[1100px] px-8 pb-12 pt-6 max-[760px]:px-4">
+    <section class="mb-6 grid grid-cols-3 gap-4 max-[760px]:grid-cols-1" id="summary-cards">
+      <div class="flex flex-col gap-1 rounded-xl border border-line bg-panel px-5 py-4">
+        <span class="text-sm text-muted" data-i18n="income">Einnahmen</span>
+        <strong class="text-[1.6rem] text-income" id="card-income">–</strong>
+      </div>
+      <div class="flex flex-col gap-1 rounded-xl border border-line bg-panel px-5 py-4">
+        <span class="text-sm text-muted" data-i18n="expenses">Ausgaben</span>
+        <strong class="text-[1.6rem] text-expense" id="card-expense">–</strong>
+      </div>
+      <div class="flex flex-col gap-1 rounded-xl border border-line bg-panel px-5 py-4">
+        <span class="text-sm text-muted" data-i18n="balance">Saldo</span>
+        <strong class="text-[1.6rem] text-accent" id="card-balance">–</strong>
+      </div>
     </section>
 
-    <section class="panel charts-panel">
-      <div class="chart-head">
-        <h2 data-i18n="analysis">Analyse</h2>
-        <button id="analyze-btn" data-i18n="analyze">Ausgaben mit KI kategorisieren</button>
+    <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <h2 class="m-0 text-[1.05rem]" data-i18n="analysis">Analyse</h2>
+        <button id="analyze-btn" class="btn" data-i18n="analyze">Ausgaben mit KI kategorisieren</button>
       </div>
       <p id="analyze-status" class="meta"></p>
-      <div class="chart-grid">
-        <div class="chart-box">
-          <h3 data-i18n="byCategory">Ausgaben nach Kategorie</h3>
-          <canvas id="category-chart"></canvas>
+      <div class="mt-4 grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
+        <div>
+          <h3 class="m-0 mb-2 text-[0.9rem] font-semibold text-muted" data-i18n="byCategory">Ausgaben nach Kategorie</h3>
+          <canvas id="category-chart" class="max-h-[280px]"></canvas>
         </div>
-        <div class="chart-box">
-          <h3 data-i18n="trendTitle">Verlauf (Einnahmen / Ausgaben)</h3>
-          <canvas id="trend-chart"></canvas>
+        <div>
+          <h3 class="m-0 mb-2 text-[0.9rem] font-semibold text-muted" data-i18n="trendTitle">Verlauf (Einnahmen / Ausgaben)</h3>
+          <canvas id="trend-chart" class="max-h-[280px]"></canvas>
         </div>
       </div>
     </section>
 
-    <div class="columns">
-      <section class="panel">
-        <h2 data-i18n="importTitle">Aus Postbank importieren</h2>
-        <form id="import-form" class="row">
-          <input type="file" id="import-file" accept=".csv,text/csv" required />
-          <button type="submit" data-i18n="importBtn">CSV importieren</button>
+    <div class="grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
+      <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
+        <h2 class="m-0 mb-3 text-[1.05rem]" data-i18n="importTitle">Aus Postbank importieren</h2>
+        <form id="import-form" class="mb-3 flex flex-wrap items-end gap-3">
+          <input type="file" id="import-file" class="field min-w-0 flex-1 p-1.5" accept=".csv,text/csv" required />
+          <button type="submit" class="btn flex-none" data-i18n="importBtn">CSV importieren</button>
         </form>
-        <p id="import-status" class="meta import-status"></p>
+        <p id="import-status" class="meta mb-2 min-h-[1.2em]"></p>
 
-        <h2 data-i18n="budgetsTitle">Kategorie-Budgets</h2>
-        <form id="budget-form" class="row">
-          <input type="text" id="budget-category" data-i18n-placeholder="category" placeholder="Kategorie" list="category-list" required />
-          <input type="number" id="budget-limit" data-i18n-placeholder="monthlyLimit" placeholder="Monatslimit €" min="0" step="0.01" required />
-          <button type="submit" data-i18n="set">Setzen</button>
+        <h2 class="mb-3 mt-5 text-[1.05rem]" data-i18n="budgetsTitle">Kategorie-Budgets</h2>
+        <form id="budget-form" class="mb-3 flex flex-wrap items-end gap-3">
+          <input type="text" id="budget-category" class="field min-w-0 flex-1" data-i18n-placeholder="category" placeholder="Kategorie" list="category-list" required />
+          <input type="number" id="budget-limit" class="field min-w-0 flex-1" data-i18n-placeholder="monthlyLimit" placeholder="Monatslimit €" min="0" step="0.01" required />
+          <button type="submit" class="btn flex-none" data-i18n="set">Setzen</button>
         </form>
         <datalist id="category-list"></datalist>
-        <ul id="budget-list" class="budget-list"></ul>
+        <ul id="budget-list" class="budget-list m-0 list-none p-0"></ul>
       </section>
 
-      <section class="panel">
-        <h2 data-i18n="spendingTitle">Ausgaben diesen Monat</h2>
-        <ul id="category-breakdown" class="breakdown"></ul>
+      <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
+        <h2 class="m-0 mb-3 text-[1.05rem]" data-i18n="spendingTitle">Ausgaben diesen Monat</h2>
+        <ul id="category-breakdown" class="m-0 list-none p-0"></ul>
       </section>
     </div>
   </main>
