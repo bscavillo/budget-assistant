@@ -135,12 +135,16 @@ def _period_clause(period=None):
     """
     if not period:
         period = date.today().strftime("%Y-%m")
+    period = period.strip()
     if period.endswith("-ytd"):
         year = period[:4]
         return "substr(date, 1, 4) = ? AND date <= ?", (year, date.today().isoformat())
     if len(period) == 4:  # YYYY
         return "substr(date, 1, 4) = ?", (period,)
-    return "substr(date, 1, 7) = ?", (period,)  # YYYY-MM
+    # YYYY-MM; normalise an unpadded month (e.g. "2026-3") so it matches the
+    # zero-padded ISO dates stored in the database.
+    year, _, month = period.partition("-")
+    return "substr(date, 1, 7) = ?", (f"{year}-{month.zfill(2)}",)
 
 
 def latest_transaction_month():
