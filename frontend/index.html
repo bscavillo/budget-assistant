@@ -53,6 +53,13 @@
           <button type="submit">Add</button>
         </form>
 
+        <h2>Import from Postbank</h2>
+        <form id="import-form" class="row">
+          <input type="file" id="import-file" accept=".csv,text/csv" required />
+          <button type="submit">Import CSV</button>
+        </form>
+        <p id="import-status" class="meta import-status"></p>
+
         <h2>Category budgets</h2>
         <form id="budget-form" class="row">
           <input type="text" id="budget-category" placeholder="Category" list="category-list" required />

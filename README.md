@@ -59,9 +59,20 @@ All data is stored locally in `backend/budget.db` (a SQLite file, git-ignored).
 The AI runs locally via Ollama, so your financial data is never sent to any
 external service.
 
+## Importing from Postbank
+
+Export your transactions from Postbank online banking as a CSV file, then use
+the **Import from Postbank** form in the app. The parser is tolerant of format
+variations: it auto-detects the encoding, delimiter, and columns by their
+German header names (`Buchungstag`, `Betrag`, `Verwendungszweck`, ...), parses
+German number/date formats, and skips rows that were already imported so
+overlapping exports don't create duplicates.
+
+If your export isn't recognized, the exact column names may differ from what the
+parser expects -- adjust the keyword lists in `backend/postbank_import.py`.
+
 ## Roadmap
 
-- [ ] Import transactions from bank statements (CSV)
 - [ ] Automatic bank sync via a PSD2 aggregator (e.g. GoCardless/Nordigen) for
       Postbank and other German banks
 - [ ] Recurring transactions

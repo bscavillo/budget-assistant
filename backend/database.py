@@ -78,6 +78,24 @@ def delete_transaction(tx_id):
         return cursor.rowcount > 0
 
 
+def transaction_exists(tx_date, tx_type, amount, description):
+    """Return True if an identical transaction is already stored.
+
+    Used to skip duplicates when re-importing a bank CSV that overlaps a
+    previous export. Category is ignored because it may be re-assigned later.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM transactions
+            WHERE date = ? AND type = ? AND amount = ? AND description = ?
+            LIMIT 1
+            """,
+            (tx_date, tx_type, amount, description),
+        ).fetchone()
+        return row is not None
+
+
 # --- Budgets --------------------------------------------------------------
 
 def list_budgets():

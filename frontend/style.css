@@ -137,6 +137,9 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 .budget-list button.del { background: transparent; color: var(--muted); padding: 0 0.4rem; }
 
+.import-status { margin: 0 0 0.5rem; min-height: 1.2em; }
+input[type="file"] { padding: 0.35rem; }
+
 .ai-panel .ai-actions { margin-bottom: 0.75rem; }
 .ai-output {
   background: var(--panel-soft);

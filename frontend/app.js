@@ -177,6 +177,27 @@ el("suggest-btn").addEventListener("click", async () => {
   }
 });
 
+el("import-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fileInput = el("import-file");
+  const status = el("import-status");
+  if (!fileInput.files.length) return;
+  status.textContent = "Importing...";
+  try {
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    const res = await fetch("/api/import/postbank", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Import failed");
+    status.textContent =
+      `Imported ${data.imported}, skipped ${data.skipped} duplicate(s) of ${data.parsed} parsed.`;
+    e.target.reset();
+    await refreshAll();
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+
 el("insights-btn").addEventListener("click", async () => {
   const out = el("ai-output");
   out.classList.add("loading");

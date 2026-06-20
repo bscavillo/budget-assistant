@@ -6,13 +6,14 @@ Run with:  uvicorn main:app --reload  (from the backend directory)
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import database
 import ollama_service
+import postbank_import
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -109,6 +110,33 @@ def ask(payload: QuestionIn):
     transactions = database.list_transactions()
     answer = ollama_service.answer_question(payload.question, summary, transactions)
     return {"answer": answer}
+
+
+@app.post("/api/import/postbank")
+async def import_postbank(file: UploadFile = File(...)):
+    """Import transactions from a Postbank CSV export.
+
+    Parses the file, skips rows already present (so overlapping exports don't
+    create duplicates), and inserts the rest.
+    """
+    raw = await file.read()
+    try:
+        parsed = postbank_import.parse(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    imported = 0
+    skipped = 0
+    for tx in parsed:
+        if database.transaction_exists(tx["date"], tx["type"], tx["amount"],
+                                       tx["description"]):
+            skipped += 1
+            continue
+        database.add_transaction(tx["date"], tx["type"], tx["category"],
+                                 tx["amount"], tx["description"])
+        imported += 1
+
+    return {"parsed": len(parsed), "imported": imported, "skipped": skipped}
 
 
 @app.post("/api/categorize")
