@@ -40,11 +40,6 @@ class BudgetIn(BaseModel):
     monthly_limit: float = Field(ge=0)
 
 
-class QuestionIn(BaseModel):
-    question: str = Field(min_length=1, max_length=500)
-    month: str | None = None
-
-
 # --- Transactions ---------------------------------------------------------
 
 @app.get("/api/transactions")
@@ -94,12 +89,6 @@ def get_summary(month: str | None = None):
     return database.monthly_summary(month)
 
 
-@app.get("/api/insights")
-def get_insights(month: str | None = None):
-    summary = database.monthly_summary(month)
-    return {"insights": ollama_service.generate_insights(summary)}
-
-
 @app.get("/api/categorized-spending")
 def categorized_spending(month: str | None = None):
     """AI-grouped spending by standard category for the given month."""
@@ -116,14 +105,6 @@ def trend(months: int = 6):
 @app.get("/api/latest-month")
 def latest_month():
     return {"month": database.latest_transaction_month()}
-
-
-@app.post("/api/ask")
-def ask(payload: QuestionIn):
-    summary = database.monthly_summary(payload.month)
-    transactions = database.list_transactions()
-    answer = ollama_service.answer_question(payload.question, summary, transactions)
-    return {"answer": answer}
 
 
 @app.post("/api/import/postbank")

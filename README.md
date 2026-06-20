@@ -13,11 +13,9 @@ financial data leaves your computer.
 - Monthly summary: income, expenses, balance, spending breakdown
 - **Charts:** spending-by-category bar chart and an income/expense trend line
   (Chart.js, bundled locally)
-- **AI assistant** (local Ollama model):
-  - Categorizes raw bank transactions into standard spending categories
-    (Groceries, Rent, Transport, ...) for the bar chart
-  - Monthly insights and saving suggestions
-  - Free-form Q&A about your finances
+- **AI categorization** (local Ollama model): groups raw bank transactions into
+  standard spending categories (Groceries, Rent, Transport, ...) for the bar
+  chart
 
 ## Tech stack
 

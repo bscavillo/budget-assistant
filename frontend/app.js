@@ -2,9 +2,15 @@
 
 // --- Internationalization -------------------------------------------------
 
+const MONTHS = {
+  de: ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August",
+       "September", "Oktober", "November", "Dezember"],
+  en: ["January", "February", "March", "April", "May", "June", "July", "August",
+       "September", "October", "November", "December"],
+};
+
 const I18N = {
   de: {
-    month: "Monat",
     income: "Einnahmen",
     expenses: "Ausgaben",
     balance: "Saldo",
@@ -19,27 +25,18 @@ const I18N = {
     monthlyLimit: "Monatslimit €",
     set: "Setzen",
     spendingTitle: "Ausgaben diesen Monat",
-    transactions: "Transaktionen",
-    aiTitle: "KI-Assistent",
-    insightsBtn: "Einblicke für diesen Monat",
-    aiPlaceholder: "Stelle eine Frage oder hole dir Einblicke zu deinem Budget.",
-    askPlaceholder: "z. B. Wie kann ich bei Lebensmitteln sparen?",
-    ask: "Fragen",
-    noTransactions: "Noch keine Transaktionen.",
+    delete: "Löschen",
     noExpenses: "Noch keine Ausgaben diesen Monat.",
     noBudgets: "Keine Budgets festgelegt.",
     overBudget: "über Budget",
-    delete: "Löschen",
     importing: "Wird importiert ...",
     importResult: "{imported} importiert, {skipped} Duplikat(e) übersprungen (von {parsed} erkannt).",
-    thinking: "Denke nach ...",
     analyzing: "Kategorisiere Ausgaben mit KI (kann eine Minute dauern) ...",
     analyzeDone: "Kategorisierung abgeschlossen.",
     noChartData: "Keine Daten zum Anzeigen.",
     spendingLabel: "Ausgaben (€)",
   },
   en: {
-    month: "Month",
     income: "Income",
     expenses: "Expenses",
     balance: "Balance",
@@ -54,20 +51,12 @@ const I18N = {
     monthlyLimit: "Monthly limit €",
     set: "Set",
     spendingTitle: "This month's spending",
-    transactions: "Transactions",
-    aiTitle: "AI assistant",
-    insightsBtn: "Insights for this month",
-    aiPlaceholder: "Ask a question or get insights about your budget.",
-    askPlaceholder: "e.g. How can I save on groceries?",
-    ask: "Ask",
-    noTransactions: "No transactions yet.",
+    delete: "Delete",
     noExpenses: "No expenses this month yet.",
     noBudgets: "No budgets set.",
     overBudget: "over budget",
-    delete: "Delete",
     importing: "Importing ...",
     importResult: "Imported {imported}, skipped {skipped} duplicate(s) (of {parsed} parsed).",
-    thinking: "Thinking ...",
     analyzing: "Categorizing spending with AI (this can take a minute) ...",
     analyzeDone: "Categorization complete.",
     noChartData: "No data to display.",
@@ -87,9 +76,10 @@ function t(key, params = {}) {
 
 const euro = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 const el = (id) => document.getElementById(id);
-const monthInput = el("month");
+const monthSelect = el("month-select");
+const yearSelect = el("year-select");
 
-// Cache of the latest fetched data so charts/lists can re-render on language change.
+// Cache of the latest fetched data so charts can re-render on language change.
 let lastTrend = null;
 let lastCategories = null;
 
@@ -104,6 +94,7 @@ function applyTranslations() {
   document.querySelectorAll("#lang-switch button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.lang === lang);
   });
+  populateMonthOptions();
 }
 
 function setLang(next) {
@@ -115,11 +106,52 @@ function setLang(next) {
   if (lastCategories) renderCategoryChart(lastCategories);
 }
 
-// --- API ------------------------------------------------------------------
+// --- Date picker ----------------------------------------------------------
+
+function populateMonthOptions() {
+  const selected = monthSelect.value;
+  monthSelect.innerHTML = "";
+  MONTHS[lang].forEach((name, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i + 1).padStart(2, "0");
+    opt.textContent = name;
+    monthSelect.appendChild(opt);
+  });
+  if (selected) monthSelect.value = selected;
+}
+
+function populateYearOptions() {
+  const now = new Date().getFullYear();
+  yearSelect.innerHTML = "";
+  for (let y = now; y >= now - 6; y--) {
+    const opt = document.createElement("option");
+    opt.value = String(y);
+    opt.textContent = String(y);
+    yearSelect.appendChild(opt);
+  }
+}
+
+function setMonthYear(iso) {
+  // iso is "YYYY-MM"
+  const [year, month] = iso.split("-");
+  if (![...yearSelect.options].some((o) => o.value === year)) {
+    const opt = document.createElement("option");
+    opt.value = year;
+    opt.textContent = year;
+    yearSelect.appendChild(opt);
+  }
+  yearSelect.value = year;
+  monthSelect.value = month;
+}
 
 function currentMonth() {
-  return monthInput.value || new Date().toISOString().slice(0, 7);
+  if (monthSelect.value && yearSelect.value) {
+    return `${yearSelect.value}-${monthSelect.value}`;
+  }
+  return new Date().toISOString().slice(0, 7);
 }
+
+// --- API ------------------------------------------------------------------
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -167,31 +199,6 @@ async function loadSummary() {
   }
 }
 
-async function loadTransactions() {
-  const txs = await api("/api/transactions");
-  const list = el("tx-list");
-  list.innerHTML = "";
-  if (!txs.length) {
-    list.innerHTML = `<li class="meta">${t("noTransactions")}</li>`;
-  }
-  const categories = new Set();
-  for (const tx of txs) {
-    categories.add(tx.category);
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <div>
-        <div>${escapeHtml(tx.category)} <span class="meta">${escapeHtml(tx.description || "")}</span></div>
-        <div class="meta">${tx.date}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:.5rem">
-        <span class="amount ${tx.type}">${tx.type === "expense" ? "-" : "+"}${euro.format(tx.amount)}</span>
-        <button class="del" data-id="${tx.id}" title="${t("delete")}">${t("delete")}</button>
-      </div>`;
-    list.appendChild(li);
-  }
-  refreshCategoryList(categories);
-}
-
 async function loadBudgets() {
   const budgets = await api("/api/budgets");
   const list = el("budget-list");
@@ -206,19 +213,16 @@ async function loadBudgets() {
       <button class="del" data-category="${escapeHtml(b.category)}">${t("delete")}</button></span>`;
     list.appendChild(li);
   }
+  refreshCategoryList(budgets);
 }
 
-function refreshCategoryList(extra = new Set()) {
-  api("/api/budgets").then((budgets) => {
-    const all = new Set(extra);
-    budgets.forEach((b) => all.add(b.category));
-    const datalist = el("category-list");
-    datalist.innerHTML = "";
-    [...all].sort().forEach((c) => {
-      const opt = document.createElement("option");
-      opt.value = c;
-      datalist.appendChild(opt);
-    });
+function refreshCategoryList(budgets) {
+  const datalist = el("category-list");
+  datalist.innerHTML = "";
+  budgets.map((b) => b.category).sort().forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    datalist.appendChild(opt);
   });
 }
 
@@ -229,7 +233,7 @@ async function loadTrend() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadTransactions(), loadBudgets(), loadTrend()]);
+  await Promise.all([loadSummary(), loadBudgets(), loadTrend()]);
 }
 
 // --- Charts ---------------------------------------------------------------
@@ -330,12 +334,6 @@ el("budget-form").addEventListener("submit", async (e) => {
 });
 
 document.addEventListener("click", async (e) => {
-  const txBtn = e.target.closest(".tx-list button.del");
-  if (txBtn) {
-    await api(`/api/transactions/${txBtn.dataset.id}`, { method: "DELETE" });
-    await refreshAll();
-    return;
-  }
   const budgetBtn = e.target.closest(".budget-list button.del");
   if (budgetBtn) {
     await api(`/api/budgets/${encodeURIComponent(budgetBtn.dataset.category)}`, { method: "DELETE" });
@@ -357,6 +355,11 @@ el("import-form").addEventListener("submit", async (e) => {
     if (!res.ok) throw new Error(data.detail || "Import failed");
     status.textContent = t("importResult", data);
     e.target.reset();
+    // Jump to the latest month so the freshly imported data is visible.
+    try {
+      const { month } = await api("/api/latest-month");
+      if (month) setMonthYear(month);
+    } catch (_) { /* ignore */ }
     await refreshAll();
   } catch (err) {
     status.textContent = err.message;
@@ -380,53 +383,18 @@ el("analyze-btn").addEventListener("click", async () => {
   }
 });
 
-el("insights-btn").addEventListener("click", async () => {
-  const out = el("ai-output");
-  out.classList.add("loading");
-  out.textContent = t("thinking");
-  try {
-    const { insights } = await api(`/api/insights?month=${currentMonth()}`);
-    out.textContent = insights;
-  } catch (err) {
-    out.textContent = err.message;
-  } finally {
-    out.classList.remove("loading");
-  }
-});
-
-el("ask-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const question = el("ask-input").value.trim();
-  if (!question) return;
-  const out = el("ai-output");
-  out.classList.add("loading");
-  out.textContent = t("thinking");
-  try {
-    const { answer } = await api("/api/ask", {
-      method: "POST",
-      body: JSON.stringify({ question, month: currentMonth() }),
-    });
-    out.textContent = answer;
-  } catch (err) {
-    out.textContent = err.message;
-  } finally {
-    out.classList.remove("loading");
-  }
-});
-
-monthInput.addEventListener("change", () => {
-  loadSummary();
-});
+monthSelect.addEventListener("change", loadSummary);
+yearSelect.addEventListener("change", loadSummary);
 
 // --- Init -----------------------------------------------------------------
 
 async function init() {
+  populateYearOptions();
   applyTranslations();
-  // Default the month picker to the most recent month that has data.
-  monthInput.value = new Date().toISOString().slice(0, 7);
+  setMonthYear(new Date().toISOString().slice(0, 7));
   try {
     const { month } = await api("/api/latest-month");
-    if (month) monthInput.value = month;
+    if (month) setMonthYear(month);
   } catch (_) {
     /* fall back to the current month */
   }

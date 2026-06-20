@@ -31,7 +31,8 @@ header {
 header h1 { margin: 0; font-size: 1.5rem; }
 
 .header-right { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
-.month-picker { display: flex; gap: 0.5rem; align-items: center; color: var(--muted); }
+.date-picker { display: flex; gap: 0.5rem; align-items: center; }
+.date-picker select { min-width: 7rem; }
 
 .lang-switch { display: flex; align-items: center; gap: 0.35rem; }
 .lang-switch button {
@@ -107,7 +108,7 @@ form#budget-form button { flex: 0 0 auto; }
 
 ul { list-style: none; margin: 0; padding: 0; }
 
-.breakdown li, .budget-list li, .tx-list li {
+.breakdown li, .budget-list li {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
@@ -126,18 +127,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 .breakdown li { flex-direction: column; align-items: stretch; }
 .breakdown .line { display: flex; justify-content: space-between; }
 
-.tx-list .meta { color: var(--muted); font-size: 0.8rem; }
-.tx-list .amount.income { color: var(--income); }
-.tx-list .amount.expense { color: var(--expense); }
-.tx-list button.del {
-  background: transparent;
-  color: var(--muted);
-  padding: 0 0.4rem;
-  font-weight: 700;
-}
-.tx-list button.del:hover { color: var(--expense); }
-
 .budget-list button.del { background: transparent; color: var(--muted); padding: 0 0.4rem; }
+.budget-list button.del:hover { color: var(--expense); }
 
 .charts-panel .chart-head {
   display: flex;
@@ -154,18 +145,6 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 .import-status { margin: 0 0 0.5rem; min-height: 1.2em; }
 input[type="file"] { padding: 0.35rem; }
-
-.ai-panel .ai-actions { margin-bottom: 0.75rem; }
-.ai-output {
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 0.75rem;
-  white-space: pre-wrap;
-  min-height: 3rem;
-}
-.ai-output.loading { color: var(--muted); font-style: italic; }
 
 @media (max-width: 760px) {
   .columns, .cards { grid-template-columns: 1fr; }

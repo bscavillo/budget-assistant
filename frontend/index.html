@@ -15,9 +15,9 @@
         <span class="pipe">|</span>
         <button data-lang="en">EN</button>
       </div>
-      <div class="month-picker">
-        <label for="month" data-i18n="month">Monat</label>
-        <input type="month" id="month" />
+      <div class="date-picker">
+        <select id="month-select" aria-label="Month"></select>
+        <select id="year-select" aria-label="Year"></select>
       </div>
     </div>
   </header>
@@ -69,23 +69,8 @@
       <section class="panel">
         <h2 data-i18n="spendingTitle">Ausgaben diesen Monat</h2>
         <ul id="category-breakdown" class="breakdown"></ul>
-
-        <h2 data-i18n="transactions">Transaktionen</h2>
-        <ul id="tx-list" class="tx-list"></ul>
       </section>
     </div>
-
-    <section class="panel ai-panel">
-      <h2 data-i18n="aiTitle">KI-Assistent</h2>
-      <div class="ai-actions">
-        <button id="insights-btn" data-i18n="insightsBtn">Einblicke für diesen Monat</button>
-      </div>
-      <div id="ai-output" class="ai-output" data-i18n="aiPlaceholder">Stelle eine Frage oder hole dir Einblicke zu deinem Budget.</div>
-      <form id="ask-form" class="row">
-        <input type="text" id="ask-input" data-i18n-placeholder="askPlaceholder" placeholder="z. B. Wie kann ich bei Lebensmitteln sparen?" />
-        <button type="submit" data-i18n="ask">Fragen</button>
-      </form>
-    </section>
   </main>
 
   <script src="/static/vendor/chart.umd.min.js"></script>
