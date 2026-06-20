@@ -22,6 +22,9 @@ PURPOSE_KEYS = ("verwendungszweck", "buchungsdetails", "buchungstext", "vorgang"
 PARTY_KEYS = ("auftraggeber", "empfanger", "empfaenger", "begunstigter",
               "beguenstigter", "name", "zahlungsbeteiligter")
 TYPE_KEYS = ("umsatzart", "buchungsart")
+# Some Postbank exports split direction into separate debit/credit columns.
+DEBIT_KEYS = ("soll",)
+CREDIT_KEYS = ("haben",)
 
 # A header line must contain at least a date-ish and an amount-ish keyword.
 HEADER_HINTS = DATE_KEYS + AMOUNT_KEYS
@@ -45,7 +48,10 @@ def _decode(raw):
 
 
 def _detect_delimiter(line):
-    return ";" if line.count(";") >= line.count(",") else ","
+    """Pick the most frequent delimiter among tab, semicolon, and comma."""
+    counts = {d: line.count(d) for d in ("\t", ";", ",")}
+    best = max(counts, key=counts.get)
+    return best if counts[best] > 0 else ";"
 
 
 def _find_header(lines):
@@ -138,39 +144,72 @@ def parse(raw_bytes):
     purpose_col = _match_column(headers, PURPOSE_KEYS)
     party_col = _match_column(headers, PARTY_KEYS)
     type_col = _match_column(headers, TYPE_KEYS)
+    debit_col = _match_column(headers, DEBIT_KEYS)
+    credit_col = _match_column(headers, CREDIT_KEYS)
 
-    if date_col is None or amount_col is None:
+    if date_col is None or (amount_col is None and credit_col is None and
+                            debit_col is None):
         raise ValueError("Could not locate the date and amount columns.")
 
     transactions = []
     for row in rows[1:]:
-        if len(row) <= max(date_col, amount_col):
+        if len(row) <= date_col:
             continue
         tx_date = _parse_date(row[date_col])
-        amount = _parse_amount(row[amount_col])
-        if tx_date is None or amount is None or amount == 0:
+        if tx_date is None:
             continue
 
+        resolved = _resolve_amount(row, amount_col, debit_col, credit_col)
+        if resolved is None:
+            continue
+        tx_type, value = resolved
+
         parts = []
-        if party_col is not None and party_col < len(row) and row[party_col].strip():
-            parts.append(row[party_col].strip())
-        if purpose_col is not None and purpose_col < len(row) and row[purpose_col].strip():
-            parts.append(row[purpose_col].strip())
+        party = _cell(row, party_col)
+        if party:
+            parts.append(party)
+        purpose = _cell(row, purpose_col)
+        if purpose:
+            parts.append(purpose)
         description = " - ".join(parts)[:200] or "Imported"
 
-        tx_type = "income" if amount > 0 else "expense"
-        category = (row[type_col].strip() if type_col is not None
-                    and type_col < len(row) and row[type_col].strip()
-                    else "Uncategorized")
+        category = _cell(row, type_col) or "Uncategorized"
 
         transactions.append(
             {
                 "date": tx_date,
                 "type": tx_type,
                 "category": category[:60],
-                "amount": round(abs(amount), 2),
+                "amount": round(value, 2),
                 "description": description,
             }
         )
 
     return transactions
+
+
+def _cell(row, idx):
+    """Return a stripped cell value, or '' if the column is missing."""
+    if idx is None or idx >= len(row):
+        return ""
+    return row[idx].strip()
+
+
+def _resolve_amount(row, amount_col, debit_col, credit_col):
+    """Determine ``(type, positive_value)`` for a row, or None to skip it.
+
+    Prefers the unambiguous Soll (debit) / Haben (credit) columns when present
+    and filled, otherwise falls back to the signed Betrag column.
+    """
+    credit = _parse_amount(_cell(row, credit_col)) if credit_col is not None else None
+    debit = _parse_amount(_cell(row, debit_col)) if debit_col is not None else None
+
+    if credit:
+        return "income", abs(credit)
+    if debit:
+        return "expense", abs(debit)
+
+    amount = _parse_amount(_cell(row, amount_col)) if amount_col is not None else None
+    if amount:
+        return ("income" if amount > 0 else "expense"), abs(amount)
+    return None
