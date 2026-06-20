@@ -209,9 +209,10 @@ async function loadBudgets() {
   }
   for (const b of budgets) {
     const li = document.createElement("li");
+    li.className = "flex justify-between gap-2 border-b border-line py-2 text-[0.9rem]";
     li.innerHTML = `<span>${escapeHtml(b.category)}</span>
       <span>${euro.format(b.monthly_limit)}
-      <button class="del" data-category="${escapeHtml(b.category)}">${t("delete")}</button></span>`;
+      <button class="del cursor-pointer border-0 bg-transparent px-1.5 text-muted hover:text-expense" data-category="${escapeHtml(b.category)}">${t("delete")}</button></span>`;
     list.appendChild(li);
   }
   refreshCategoryList(budgets);
