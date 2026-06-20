@@ -95,6 +95,14 @@
           <canvas id="trend-chart" class="max-h-[280px]"></canvas>
         </div>
       </div>
+      <p id="category-hint" class="meta mt-3" data-i18n="clickHint">Auf einen Balken klicken, um die einzelnen Transaktionen zu sehen.</p>
+      <div id="category-detail" class="mt-4 hidden rounded-lg border border-line bg-panel-soft px-4 py-3">
+        <div class="flex items-center justify-between gap-3">
+          <h3 id="category-detail-title" class="m-0 text-[0.95rem] font-semibold"></h3>
+          <button id="category-detail-close" class="cursor-pointer border-0 bg-transparent text-muted hover:text-ink" data-i18n="close">Schließen</button>
+        </div>
+        <ul id="category-detail-list" class="m-0 mt-2 list-none p-0"></ul>
+      </div>
     </section>
 
     <div class="grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">

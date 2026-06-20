@@ -35,6 +35,9 @@ const I18N = {
     analyzeDone: "Kategorisierung abgeschlossen.",
     noChartData: "Keine Daten zum Anzeigen.",
     spendingLabel: "Ausgaben (€)",
+    txForCategory: "Transaktionen – {category}",
+    clickHint: "Auf einen Balken klicken, um die einzelnen Transaktionen zu sehen.",
+    close: "Schließen",
   },
   en: {
     income: "Income",
@@ -61,6 +64,9 @@ const I18N = {
     analyzeDone: "Categorization complete.",
     noChartData: "No data to display.",
     spendingLabel: "Spending (€)",
+    txForCategory: "Transactions – {category}",
+    clickHint: "Click a bar to see its individual transactions.",
+    close: "Close",
   },
 };
 
@@ -292,6 +298,7 @@ function renderTrendChart(trend) {
 function renderCategoryChart(categories) {
   const ctx = el("category-chart");
   if (categoryChart) categoryChart.destroy();
+  hideCategoryDetail();
   categoryChart = new Chart(ctx, {
     type: "bar",
     data: {
@@ -306,6 +313,12 @@ function renderCategoryChart(categories) {
     },
     options: {
       responsive: true,
+      onClick: (_event, elements) => {
+        if (elements.length) showCategoryDetail(categories[elements[0].index]);
+      },
+      onHover: (event, elements) => {
+        event.native.target.style.cursor = elements.length ? "pointer" : "default";
+      },
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: tickColor }, grid: { color: gridColor } },
@@ -313,6 +326,34 @@ function renderCategoryChart(categories) {
       },
     },
   });
+}
+
+function hideCategoryDetail() {
+  el("category-detail").classList.add("hidden");
+}
+
+function showCategoryDetail(category) {
+  const panel = el("category-detail");
+  el("category-detail-title").textContent =
+    t("txForCategory", { category: category.category });
+  const list = el("category-detail-list");
+  list.innerHTML = "";
+  const transactions = category.transactions || [];
+  if (!transactions.length) {
+    list.innerHTML = `<li class="meta">${t("noExpenses")}</li>`;
+  }
+  for (const tx of transactions) {
+    const li = document.createElement("li");
+    li.className = "flex justify-between gap-3 border-b border-line py-1.5 text-[0.85rem]";
+    li.innerHTML = `
+      <span class="min-w-0 flex-1 truncate">
+        <span class="text-muted">${escapeHtml(tx.date)}</span>
+        ${escapeHtml(tx.description || "—")}
+      </span>
+      <span class="flex-none">${euro.format(tx.amount)}</span>`;
+    list.appendChild(li);
+  }
+  panel.classList.remove("hidden");
 }
 
 // --- Events ---------------------------------------------------------------
@@ -390,6 +431,7 @@ async function analyzeSpending() {
 }
 
 el("analyze-btn").addEventListener("click", analyzeSpending);
+el("category-detail-close").addEventListener("click", hideCategoryDetail);
 
 function onMonthYearChange() {
   loadSummary();

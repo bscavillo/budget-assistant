@@ -133,6 +133,7 @@ def categorize_spending(expenses):
     items = sorted(expenses, key=lambda t: t["amount"], reverse=True)[:200]
 
     totals = {}
+    transactions = {}
     failed_batches = 0
     total_batches = 0
 
@@ -145,6 +146,14 @@ def categorize_spending(expenses):
             pairs = [(t, t["category"] or "Other") for t in batch]
         for tx, category in pairs:
             totals[category] = totals.get(category, 0.0) + tx["amount"]
+            transactions.setdefault(category, []).append(
+                {
+                    "id": tx["id"],
+                    "date": tx["date"],
+                    "description": tx["description"],
+                    "amount": round(tx["amount"], 2),
+                }
+            )
 
     if failed_batches == total_batches:
         warning = "AI categorization unavailable; showing original categories."
@@ -155,7 +164,16 @@ def categorize_spending(expenses):
         warning = None
 
     categories = sorted(
-        ({"category": c, "amount": round(v, 2)} for c, v in totals.items()),
+        (
+            {
+                "category": c,
+                "amount": round(totals[c], 2),
+                "transactions": sorted(
+                    transactions[c], key=lambda x: x["amount"], reverse=True
+                ),
+            }
+            for c in totals
+        ),
         key=lambda x: x["amount"],
         reverse=True,
     )
