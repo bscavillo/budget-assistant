@@ -30,7 +30,20 @@ header {
 
 header h1 { margin: 0; font-size: 1.5rem; }
 
+.header-right { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
 .month-picker { display: flex; gap: 0.5rem; align-items: center; color: var(--muted); }
+
+.lang-switch { display: flex; align-items: center; gap: 0.35rem; }
+.lang-switch button {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  padding: 0.15rem 0.35rem;
+  font-weight: 600;
+  border-radius: 6px;
+}
+.lang-switch button.active { color: var(--accent); background: var(--panel-soft); }
+.lang-switch .pipe { color: var(--border); }
 
 main { max-width: 1100px; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
 
@@ -90,18 +103,7 @@ button {
 }
 button:hover { filter: brightness(1.08); }
 
-form#tx-form > button[type="submit"],
 form#budget-form button { flex: 0 0 auto; }
-
-.cat-field { position: relative; }
-.cat-field #suggest-btn {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  padding: 0.25rem 0.5rem;
-  background: transparent;
-  font-size: 1rem;
-}
 
 ul { list-style: none; margin: 0; padding: 0; }
 
@@ -136,6 +138,19 @@ ul { list-style: none; margin: 0; padding: 0; }
 .tx-list button.del:hover { color: var(--expense); }
 
 .budget-list button.del { background: transparent; color: var(--muted); padding: 0 0.4rem; }
+
+.charts-panel .chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.charts-panel .chart-head h2 { margin: 0; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem; }
+.chart-box h3 { font-size: 0.9rem; color: var(--muted); font-weight: 600; margin: 0 0 0.5rem; }
+.chart-box canvas { max-height: 280px; }
+@media (max-width: 760px) { .chart-grid { grid-template-columns: 1fr; } }
 
 .import-status { margin: 0 0 0.5rem; min-height: 1.2em; }
 input[type="file"] { padding: 0.35rem; }

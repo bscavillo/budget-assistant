@@ -7,13 +7,17 @@ financial data leaves your computer.
 
 ## Features
 
-- Add income/expense transactions with categories and descriptions
+- Import transactions from Postbank CSV exports (no manual entry needed)
+- Bilingual UI (German / English) with a language switcher; German by default
 - Per-category monthly budgets with progress bars and overspend warnings
 - Monthly summary: income, expenses, balance, spending breakdown
+- **Charts:** spending-by-category bar chart and an income/expense trend line
+  (Chart.js, bundled locally)
 - **AI assistant** (local Ollama model):
+  - Categorizes raw bank transactions into standard spending categories
+    (Groceries, Rent, Transport, ...) for the bar chart
   - Monthly insights and saving suggestions
   - Free-form Q&A about your finances
-  - Automatic category suggestions for transactions
 
 ## Tech stack
 

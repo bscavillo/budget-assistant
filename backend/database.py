@@ -124,6 +124,73 @@ def delete_budget(category):
 
 # --- Aggregations ---------------------------------------------------------
 
+def latest_transaction_month():
+    """Return the most recent ISO ``YYYY-MM`` with a transaction, or None."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT substr(date, 1, 7) AS month FROM transactions "
+            "ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        return row["month"] if row else None
+
+
+def expenses_for_month(month=None):
+    """Return all expense transactions for the given ISO ``YYYY-MM`` month."""
+    if month is None:
+        month = date.today().strftime("%Y-%m")
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM transactions
+            WHERE type = 'expense' AND substr(date, 1, 7) = ?
+            ORDER BY date DESC, id DESC
+            """,
+            (month,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def monthly_totals(months=6):
+    """Return income/expense totals per month for the last ``months`` months.
+
+    Months with no transactions are included with zero totals so the trend
+    line is continuous.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT substr(date, 1, 7) AS month, type,
+                   COALESCE(SUM(amount), 0) AS total
+            FROM transactions
+            GROUP BY month, type
+            """
+        ).fetchall()
+
+    by_month = {}
+    for row in rows:
+        by_month.setdefault(row["month"], {})[row["type"]] = row["total"]
+
+    today = date.today()
+    sequence = []
+    year, month = today.year, today.month
+    for _ in range(months):
+        key = f"{year:04d}-{month:02d}"
+        entry = by_month.get(key, {})
+        sequence.append(
+            {
+                "month": key,
+                "income": round(entry.get("income", 0.0), 2),
+                "expense": round(entry.get("expense", 0.0), 2),
+            }
+        )
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+
+    return list(reversed(sequence))
+
+
 def monthly_summary(month=None):
     """Return income/expense totals and per-category spending for a month.
 

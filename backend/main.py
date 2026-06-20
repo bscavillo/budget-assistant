@@ -45,10 +45,6 @@ class QuestionIn(BaseModel):
     month: str | None = None
 
 
-class CategorizeIn(BaseModel):
-    description: str = Field(min_length=1, max_length=200)
-
-
 # --- Transactions ---------------------------------------------------------
 
 @app.get("/api/transactions")
@@ -104,6 +100,24 @@ def get_insights(month: str | None = None):
     return {"insights": ollama_service.generate_insights(summary)}
 
 
+@app.get("/api/categorized-spending")
+def categorized_spending(month: str | None = None):
+    """AI-grouped spending by standard category for the given month."""
+    expenses = database.expenses_for_month(month)
+    return ollama_service.categorize_spending(expenses)
+
+
+@app.get("/api/trend")
+def trend(months: int = 6):
+    months = max(1, min(months, 24))
+    return {"trend": database.monthly_totals(months)}
+
+
+@app.get("/api/latest-month")
+def latest_month():
+    return {"month": database.latest_transaction_month()}
+
+
 @app.post("/api/ask")
 def ask(payload: QuestionIn):
     summary = database.monthly_summary(payload.month)
@@ -137,14 +151,6 @@ async def import_postbank(file: UploadFile = File(...)):
         imported += 1
 
     return {"parsed": len(parsed), "imported": imported, "skipped": skipped}
-
-
-@app.post("/api/categorize")
-def categorize(payload: CategorizeIn):
-    known = sorted({b["category"] for b in database.list_budgets()} |
-                   {t["category"] for t in database.list_transactions()})
-    suggestion = ollama_service.suggest_category(payload.description, known)
-    return {"category": suggestion}
 
 
 # --- Frontend -------------------------------------------------------------

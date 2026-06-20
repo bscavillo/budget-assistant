@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,88 +9,86 @@
 <body>
   <header>
     <h1>Budget Assistant</h1>
-    <div class="month-picker">
-      <label for="month">Month</label>
-      <input type="month" id="month" />
+    <div class="header-right">
+      <div class="lang-switch" id="lang-switch">
+        <button data-lang="de" class="active">DE</button>
+        <span class="pipe">|</span>
+        <button data-lang="en">EN</button>
+      </div>
+      <div class="month-picker">
+        <label for="month" data-i18n="month">Monat</label>
+        <input type="month" id="month" />
+      </div>
     </div>
   </header>
 
   <main>
     <section class="cards" id="summary-cards">
-      <div class="card income"><span>Income</span><strong id="card-income">–</strong></div>
-      <div class="card expense"><span>Expenses</span><strong id="card-expense">–</strong></div>
-      <div class="card balance"><span>Balance</span><strong id="card-balance">–</strong></div>
+      <div class="card income"><span data-i18n="income">Einnahmen</span><strong id="card-income">–</strong></div>
+      <div class="card expense"><span data-i18n="expenses">Ausgaben</span><strong id="card-expense">–</strong></div>
+      <div class="card balance"><span data-i18n="balance">Saldo</span><strong id="card-balance">–</strong></div>
+    </section>
+
+    <section class="panel charts-panel">
+      <div class="chart-head">
+        <h2 data-i18n="analysis">Analyse</h2>
+        <button id="analyze-btn" data-i18n="analyze">Ausgaben mit KI kategorisieren</button>
+      </div>
+      <p id="analyze-status" class="meta"></p>
+      <div class="chart-grid">
+        <div class="chart-box">
+          <h3 data-i18n="byCategory">Ausgaben nach Kategorie</h3>
+          <canvas id="category-chart"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3 data-i18n="trendTitle">Verlauf (Einnahmen / Ausgaben)</h3>
+          <canvas id="trend-chart"></canvas>
+        </div>
+      </div>
     </section>
 
     <div class="columns">
       <section class="panel">
-        <h2>Add transaction</h2>
-        <form id="tx-form">
-          <div class="row">
-            <label>Type
-              <select name="type" id="tx-type">
-                <option value="expense">Expense</option>
-                <option value="income">Income</option>
-              </select>
-            </label>
-            <label>Date
-              <input type="date" name="date" id="tx-date" required />
-            </label>
-          </div>
-          <div class="row">
-            <label>Amount (€)
-              <input type="number" name="amount" id="tx-amount" min="0.01" step="0.01" required />
-            </label>
-            <label class="cat-field">Category
-              <input type="text" name="category" id="tx-category" list="category-list" required />
-              <button type="button" id="suggest-btn" title="Suggest category with AI">AI</button>
-            </label>
-          </div>
-          <label>Description
-            <input type="text" name="description" id="tx-description" placeholder="e.g. Rewe groceries" />
-          </label>
-          <datalist id="category-list"></datalist>
-          <button type="submit">Add</button>
-        </form>
-
-        <h2>Import from Postbank</h2>
+        <h2 data-i18n="importTitle">Aus Postbank importieren</h2>
         <form id="import-form" class="row">
           <input type="file" id="import-file" accept=".csv,text/csv" required />
-          <button type="submit">Import CSV</button>
+          <button type="submit" data-i18n="importBtn">CSV importieren</button>
         </form>
         <p id="import-status" class="meta import-status"></p>
 
-        <h2>Category budgets</h2>
+        <h2 data-i18n="budgetsTitle">Kategorie-Budgets</h2>
         <form id="budget-form" class="row">
-          <input type="text" id="budget-category" placeholder="Category" list="category-list" required />
-          <input type="number" id="budget-limit" placeholder="Monthly limit €" min="0" step="0.01" required />
-          <button type="submit">Set</button>
+          <input type="text" id="budget-category" data-i18n-placeholder="category" placeholder="Kategorie" list="category-list" required />
+          <input type="number" id="budget-limit" data-i18n-placeholder="monthlyLimit" placeholder="Monatslimit €" min="0" step="0.01" required />
+          <button type="submit" data-i18n="set">Setzen</button>
         </form>
+        <datalist id="category-list"></datalist>
         <ul id="budget-list" class="budget-list"></ul>
       </section>
 
       <section class="panel">
-        <h2>This month's spending</h2>
+        <h2 data-i18n="spendingTitle">Ausgaben diesen Monat</h2>
         <ul id="category-breakdown" class="breakdown"></ul>
 
-        <h2>Transactions</h2>
+        <h2 data-i18n="transactions">Transaktionen</h2>
         <ul id="tx-list" class="tx-list"></ul>
       </section>
     </div>
 
     <section class="panel ai-panel">
-      <h2>AI assistant</h2>
+      <h2 data-i18n="aiTitle">KI-Assistent</h2>
       <div class="ai-actions">
-        <button id="insights-btn">Get insights for this month</button>
+        <button id="insights-btn" data-i18n="insightsBtn">Einblicke für diesen Monat</button>
       </div>
-      <div id="ai-output" class="ai-output">Ask a question or get insights about your budget.</div>
+      <div id="ai-output" class="ai-output" data-i18n="aiPlaceholder">Stelle eine Frage oder hole dir Einblicke zu deinem Budget.</div>
       <form id="ask-form" class="row">
-        <input type="text" id="ask-input" placeholder="e.g. How can I save more on groceries?" />
-        <button type="submit">Ask</button>
+        <input type="text" id="ask-input" data-i18n-placeholder="askPlaceholder" placeholder="z. B. Wie kann ich bei Lebensmitteln sparen?" />
+        <button type="submit" data-i18n="ask">Fragen</button>
       </form>
     </section>
   </main>
 
+  <script src="/static/vendor/chart.umd.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
