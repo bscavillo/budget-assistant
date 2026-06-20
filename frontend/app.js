@@ -36,8 +36,9 @@ const I18N = {
     noChartData: "Keine Daten zum Anzeigen.",
     spendingLabel: "Ausgaben (€)",
     txForCategory: "Transaktionen – {category}",
-    clickHint: "Auf einen Balken klicken, um die einzelnen Transaktionen zu sehen.",
     close: "Schließen",
+    fullYear: "Ganzes Jahr",
+    yearToDate: "Bisher dieses Jahr",
   },
   en: {
     income: "Income",
@@ -65,8 +66,9 @@ const I18N = {
     noChartData: "No data to display.",
     spendingLabel: "Spending (€)",
     txForCategory: "Transactions – {category}",
-    clickHint: "Click a bar to see its individual transactions.",
     close: "Close",
+    fullYear: "Full year",
+    yearToDate: "Year to date",
   },
 };
 
@@ -117,6 +119,13 @@ function setLang(next) {
 function populateMonthOptions() {
   const selected = monthSelect.value;
   monthSelect.innerHTML = "";
+  // Whole-period choices precede the individual months.
+  for (const [value, key] of [["ytd", "yearToDate"], ["year", "fullYear"]]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = t(key);
+    monthSelect.appendChild(opt);
+  }
   MONTHS[lang].forEach((name, i) => {
     const opt = document.createElement("option");
     opt.value = String(i + 1).padStart(2, "0");
@@ -150,11 +159,14 @@ function setMonthYear(iso) {
   monthSelect.value = month;
 }
 
-function currentMonth() {
-  if (monthSelect.value && yearSelect.value) {
-    return `${yearSelect.value}-${monthSelect.value}`;
-  }
-  return new Date().toISOString().slice(0, 7);
+// The period passed to the API: "YYYY-MM" for a month, "YYYY" for a full year,
+// or "YYYY-ytd" for the year up to today.
+function currentPeriod() {
+  const year = yearSelect.value || String(new Date().getFullYear());
+  const month = monthSelect.value;
+  if (month === "year") return year;
+  if (month === "ytd") return `${year}-ytd`;
+  return `${year}-${month}`;
 }
 
 // --- API ------------------------------------------------------------------
@@ -179,7 +191,7 @@ function escapeHtml(str) {
 // --- Rendering ------------------------------------------------------------
 
 async function loadSummary() {
-  const summary = await api(`/api/summary?month=${currentMonth()}`);
+  const summary = await api(`/api/summary?period=${currentPeriod()}`);
   el("card-income").textContent = euro.format(summary.income);
   el("card-expense").textContent = euro.format(summary.expense);
   el("card-balance").textContent = euro.format(summary.balance);
@@ -415,7 +427,7 @@ async function analyzeSpending() {
   btn.disabled = true;
   status.textContent = t("analyzing");
   try {
-    const data = await api(`/api/categorized-spending?month=${currentMonth()}`);
+    const data = await api(`/api/categorized-spending?period=${currentPeriod()}`);
     lastCategories = data.categories;
     if (!data.categories.length) {
       status.textContent = t("noChartData");

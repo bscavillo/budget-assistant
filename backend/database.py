@@ -124,6 +124,25 @@ def delete_budget(category):
 
 # --- Aggregations ---------------------------------------------------------
 
+def _period_clause(period=None):
+    """Return an SQL ``(condition, params)`` pair for a reporting period.
+
+    ``period`` may be:
+      * ``"YYYY-MM"``  – a single month (the default when ``period`` is falsy)
+      * ``"YYYY"``     – a whole calendar year
+      * ``"YYYY-ytd"`` – the year up to and including today
+    The condition is meant to be AND-ed into a ``WHERE`` clause on ``date``.
+    """
+    if not period:
+        period = date.today().strftime("%Y-%m")
+    if period.endswith("-ytd"):
+        year = period[:4]
+        return "substr(date, 1, 4) = ? AND date <= ?", (year, date.today().isoformat())
+    if len(period) == 4:  # YYYY
+        return "substr(date, 1, 4) = ?", (period,)
+    return "substr(date, 1, 7) = ?", (period,)  # YYYY-MM
+
+
 def latest_transaction_month():
     """Return the most recent ISO ``YYYY-MM`` with a transaction, or None."""
     with get_connection() as conn:
@@ -134,18 +153,21 @@ def latest_transaction_month():
         return row["month"] if row else None
 
 
-def expenses_for_month(month=None):
-    """Return all expense transactions for the given ISO ``YYYY-MM`` month."""
-    if month is None:
-        month = date.today().strftime("%Y-%m")
+def expenses_for_period(period=None):
+    """Return all expense transactions for the given reporting period.
+
+    See ``_period_clause`` for the accepted ``period`` formats (month, full
+    year, or year-to-date).
+    """
+    condition, params = _period_clause(period)
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT * FROM transactions
-            WHERE type = 'expense' AND substr(date, 1, 7) = ?
+            WHERE type = 'expense' AND {condition}
             ORDER BY date DESC, id DESC
             """,
-            (month,),
+            params,
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -191,34 +213,34 @@ def monthly_totals(months=6):
     return list(reversed(sequence))
 
 
-def monthly_summary(month=None):
-    """Return income/expense totals and per-category spending for a month.
+def period_summary(period=None):
+    """Return income/expense totals and per-category spending for a period.
 
-    ``month`` is an ISO ``YYYY-MM`` string; defaults to the current month.
+    ``period`` accepts the formats described in ``_period_clause`` (month, full
+    year, or year-to-date); defaults to the current month.
     """
-    if month is None:
-        month = date.today().strftime("%Y-%m")
+    condition, params = _period_clause(period)
 
     with get_connection() as conn:
         totals = conn.execute(
-            """
+            f"""
             SELECT type, COALESCE(SUM(amount), 0) AS total
             FROM transactions
-            WHERE substr(date, 1, 7) = ?
+            WHERE {condition}
             GROUP BY type
             """,
-            (month,),
+            params,
         ).fetchall()
 
         per_category = conn.execute(
-            """
+            f"""
             SELECT category, COALESCE(SUM(amount), 0) AS spent
             FROM transactions
-            WHERE type = 'expense' AND substr(date, 1, 7) = ?
+            WHERE type = 'expense' AND {condition}
             GROUP BY category
             ORDER BY spent DESC
             """,
-            (month,),
+            params,
         ).fetchall()
 
         budgets = {row["category"]: row["monthly_limit"] for row in
@@ -246,7 +268,7 @@ def monthly_summary(month=None):
         )
 
     return {
-        "month": month,
+        "period": period or date.today().strftime("%Y-%m"),
         "income": round(income, 2),
         "expense": round(expense, 2),
         "balance": round(income - expense, 2),

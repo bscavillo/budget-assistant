@@ -85,14 +85,18 @@ def remove_budget(category: str):
 # --- Summary & AI ---------------------------------------------------------
 
 @app.get("/api/summary")
-def get_summary(month: str | None = None):
-    return database.monthly_summary(month)
+def get_summary(period: str | None = None):
+    return database.period_summary(period)
 
 
 @app.get("/api/categorized-spending")
-def categorized_spending(month: str | None = None):
-    """AI-grouped spending by standard category for the given month."""
-    expenses = database.expenses_for_month(month)
+def categorized_spending(period: str | None = None):
+    """AI-grouped spending by standard category for the given period.
+
+    ``period`` may be a month (``YYYY-MM``), a full year (``YYYY``), or
+    year-to-date (``YYYY-ytd``).
+    """
+    expenses = database.expenses_for_period(period)
     return ollama_service.categorize_spending(expenses)
 
 
