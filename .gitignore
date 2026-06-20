@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local database (contains personal financial data)
+backend/budget.db
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

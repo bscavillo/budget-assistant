@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget Assistant</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Budget Assistant</h1>
+    <div class="month-picker">
+      <label for="month">Month</label>
+      <input type="month" id="month" />
+    </div>
+  </header>
+
+  <main>
+    <section class="cards" id="summary-cards">
+      <div class="card income"><span>Income</span><strong id="card-income">–</strong></div>
+      <div class="card expense"><span>Expenses</span><strong id="card-expense">–</strong></div>
+      <div class="card balance"><span>Balance</span><strong id="card-balance">–</strong></div>
+    </section>
+
+    <div class="columns">
+      <section class="panel">
+        <h2>Add transaction</h2>
+        <form id="tx-form">
+          <div class="row">
+            <label>Type
+              <select name="type" id="tx-type">
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </label>
+            <label>Date
+              <input type="date" name="date" id="tx-date" required />
+            </label>
+          </div>
+          <div class="row">
+            <label>Amount (€)
+              <input type="number" name="amount" id="tx-amount" min="0.01" step="0.01" required />
+            </label>
+            <label class="cat-field">Category
+              <input type="text" name="category" id="tx-category" list="category-list" required />
+              <button type="button" id="suggest-btn" title="Suggest category with AI">AI</button>
+            </label>
+          </div>
+          <label>Description
+            <input type="text" name="description" id="tx-description" placeholder="e.g. Rewe groceries" />
+          </label>
+          <datalist id="category-list"></datalist>
+          <button type="submit">Add</button>
+        </form>
+
+        <h2>Category budgets</h2>
+        <form id="budget-form" class="row">
+          <input type="text" id="budget-category" placeholder="Category" list="category-list" required />
+          <input type="number" id="budget-limit" placeholder="Monthly limit €" min="0" step="0.01" required />
+          <button type="submit">Set</button>
+        </form>
+        <ul id="budget-list" class="budget-list"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>This month's spending</h2>
+        <ul id="category-breakdown" class="breakdown"></ul>
+
+        <h2>Transactions</h2>
+        <ul id="tx-list" class="tx-list"></ul>
+      </section>
+    </div>
+
+    <section class="panel ai-panel">
+      <h2>AI assistant</h2>
+      <div class="ai-actions">
+        <button id="insights-btn">Get insights for this month</button>
+      </div>
+      <div id="ai-output" class="ai-output">Ask a question or get insights about your budget.</div>
+      <form id="ask-form" class="row">
+        <input type="text" id="ask-input" placeholder="e.g. How can I save more on groceries?" />
+        <button type="submit">Ask</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

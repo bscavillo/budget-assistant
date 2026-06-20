@@ -1,0 +1,155 @@
+:root {
+  --bg: #0f172a;
+  --panel: #1e293b;
+  --panel-soft: #273449;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --income: #4ade80;
+  --expense: #f87171;
+  --border: #334155;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { margin: 0; font-size: 1.5rem; }
+
+.month-picker { display: flex; gap: 0.5rem; align-items: center; color: var(--muted); }
+
+main { max-width: 1100px; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
+
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.card span { color: var(--muted); font-size: 0.85rem; }
+.card strong { font-size: 1.6rem; }
+.card.income strong { color: var(--income); }
+.card.expense strong { color: var(--expense); }
+.card.balance strong { color: var(--accent); }
+
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.panel h2 { font-size: 1.05rem; margin: 1.25rem 0 0.75rem; }
+.panel h2:first-child { margin-top: 0; }
+
+label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--muted); }
+
+.row { display: flex; gap: 0.75rem; align-items: flex-end; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.row > * { flex: 1; min-width: 0; }
+
+input, select, button {
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: #06283d;
+  font-weight: 600;
+  border: none;
+}
+button:hover { filter: brightness(1.08); }
+
+form#tx-form > button[type="submit"],
+form#budget-form button { flex: 0 0 auto; }
+
+.cat-field { position: relative; }
+.cat-field #suggest-btn {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  font-size: 1rem;
+}
+
+ul { list-style: none; margin: 0; padding: 0; }
+
+.breakdown li, .budget-list li, .tx-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.breakdown .bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  margin-top: 0.3rem;
+}
+.breakdown .over { background: var(--expense); }
+.breakdown li { flex-direction: column; align-items: stretch; }
+.breakdown .line { display: flex; justify-content: space-between; }
+
+.tx-list .meta { color: var(--muted); font-size: 0.8rem; }
+.tx-list .amount.income { color: var(--income); }
+.tx-list .amount.expense { color: var(--expense); }
+.tx-list button.del {
+  background: transparent;
+  color: var(--muted);
+  padding: 0 0.4rem;
+  font-weight: 700;
+}
+.tx-list button.del:hover { color: var(--expense); }
+
+.budget-list button.del { background: transparent; color: var(--muted); padding: 0 0.4rem; }
+
+.ai-panel .ai-actions { margin-bottom: 0.75rem; }
+.ai-output {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  white-space: pre-wrap;
+  min-height: 3rem;
+}
+.ai-output.loading { color: var(--muted); font-style: italic; }
+
+@media (max-width: 760px) {
+  .columns, .cards { grid-template-columns: 1fr; }
+  header, main { padding-left: 1rem; padding-right: 1rem; }
+}
