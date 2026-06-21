@@ -208,11 +208,14 @@ def latest_transaction_month():
         return row["month"] if row else None
 
 
-def monthly_totals(months=6):
-    """Return income/expense totals per month for the last ``months`` months.
+def monthly_totals(months=6, anchor=None):
+    """Return income/expense totals per month for ``months`` months.
 
-    Months with no transactions are included with zero totals so the trend
-    line is continuous.
+    The window ends on ``anchor`` (an inclusive ``YYYY-MM``, defaulting to the
+    current month) and runs back from there, so the trend can follow whichever
+    period the UI has selected rather than always ending on today. Months with
+    no transactions are included with zero totals so the trend line stays
+    continuous.
     """
     with get_connection() as conn:
         rows = conn.execute(
@@ -228,9 +231,12 @@ def monthly_totals(months=6):
     for row in rows:
         by_month.setdefault(row["month"], {})[row["type"]] = row["total"]
 
-    today = date.today()
+    if anchor:
+        year, month = int(anchor[:4]), int(anchor[5:7])
+    else:
+        today = date.today()
+        year, month = today.year, today.month
     sequence = []
-    year, month = today.year, today.month
     for _ in range(months):
         key = f"{year:04d}-{month:02d}"
         entry = by_month.get(key, {})

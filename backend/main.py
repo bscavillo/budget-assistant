@@ -103,13 +103,6 @@ def get_summary(period: str | None = None, *, background: BackgroundTasks):
     return summary
 
 
-@app.get("/api/advice")
-def get_advice(period: str | None = None):
-    """AI suggestions on what to trim or stop for the given period."""
-    summary = database.period_summary(period)
-    return ollama_service.generate_advice(summary)
-
-
 @app.get("/api/categories")
 def get_categories():
     """The canonical spending categories used for classification and budgets."""
@@ -117,9 +110,37 @@ def get_categories():
 
 
 @app.get("/api/trend")
-def trend(months: int = 6):
-    months = max(1, min(months, 24))
-    return {"trend": database.monthly_totals(months)}
+def trend(period: str | None = None):
+    """Monthly income/expense trend anchored on the selected period.
+
+    The chart follows the date picker instead of always ending on today: a
+    single month shows the six months up to it, a full year shows that year's
+    twelve months, and a year-to-date selection shows January through the
+    latest month in view.
+    """
+    anchor, months = _trend_window(period)
+    return {"trend": database.monthly_totals(months, anchor)}
+
+
+def _trend_window(period):
+    """Map a reporting ``period`` to a ``(anchor_month, months)`` window.
+
+    ``anchor_month`` is the inclusive ``YYYY-MM`` end of the trend; ``months``
+    is how many months back from it to show. Mirrors the period formats in
+    ``database._period_clause``.
+    """
+    today = date.today()
+    if not period:
+        return today.strftime("%Y-%m"), 6
+    period = period.strip()
+    if period.endswith("-ytd"):
+        year = int(period[:4])
+        last = today.month if year == today.year else 12
+        return f"{year:04d}-{last:02d}", last
+    if len(period) == 4:  # YYYY — the whole calendar year
+        return f"{int(period):04d}-12", 12
+    year, _, month = period.partition("-")
+    return f"{int(year):04d}-{int(month):02d}", 6
 
 
 @app.get("/api/latest-month")

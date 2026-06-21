@@ -1,14 +1,11 @@
 """AI helpers backed by a local Ollama model.
 
-Two jobs run through here:
+The one job here is **classification** — turning a messy German bank
+transaction (full of SEPA/IBAN boilerplate) into a clean merchant name and one
+real spending category, which the caller persists so the work is never
+repeated.
 
-* **Classification** — turn a messy German bank transaction (full of SEPA/IBAN
-  boilerplate) into a clean merchant name and one real spending category, which
-  the caller persists so the work is never repeated.
-* **Advice** — look at a period's category spending against its budgets and
-  suggest concrete things to trim or stop.
-
-Neither ever raises on a missing Ollama server; callers get a graceful fallback
+It never raises on a missing Ollama server; callers get a graceful fallback
 instead so the rest of the app keeps working offline.
 """
 
@@ -66,7 +63,7 @@ def _chat_json(messages, *, temperature=0.0, num_ctx=8192):
 STANDARD_CATEGORIES = [
     "Groceries", "Rent", "Utilities", "Transport", "Dining", "Shopping",
     "Health", "Insurance", "Entertainment", "Subscriptions", "Education",
-    "Cash", "Fees", "Other",
+    "Cash", "Fees", "Transfers", "Other",
 ]
 
 # The bucket used for anything the model cannot place; kept off the list above
@@ -105,15 +102,18 @@ def _dedup_key(tx):
 # spell out the kind of German terms it will actually see.
 _CATEGORY_HINTS = (
     "- Groceries: supermarkets & food shops such as REWE, EDEKA, ALDI, LIDL, "
-    "PENNY, NETTO, Kaufland, DM, Rossmann, Bäckerei, Metzgerei.\n"
-    "- Rent: Miete, Mietzahlung, Kaltmiete, Warmmiete, payments to a Vermieter/"
-    "Hausverwaltung.\n"
+    "PENNY, NETTO, Kaufland, DM, Rossmann, Metzgerei (butcher).\n"
+    "- Rent: Miete, Mietzahlung, Kaltmiete, Warmmiete, and any payment "
+    "(including a SEPA-Dauerauftrag) to a Vermieter, Hausverwaltung, property "
+    "manager or real-estate company — names containing 'Immobilien', "
+    "'Hausverwaltung', 'HV GmbH' or 'Verwaltung' are Rent, not transfers.\n"
     "- Utilities: Strom, Gas, Wasser, Stadtwerke, Telekom, Vodafone, O2, "
     "1&1, GEZ/Rundfunkbeitrag, Internet, Handy/Mobilfunk.\n"
     "- Transport: Deutsche Bahn (DB), BVG, MVG, VVS, Tankstelle, Aral, Shell, "
     "Esso, Total, Uber, FREENOW, Flixbus, Parkhaus, Deutschlandticket.\n"
-    "- Dining: Restaurant, Café, Bar, Imbiss, McDonald's, Burger King, "
-    "Lieferando, Wolt, Uber Eats, Starbucks.\n"
+    "- Dining: eating & drinking out — Restaurant, Café, Bar, Imbiss, plus any "
+    "bakery or pastry shop: Bäckerei, Feinbäckerei, Konditorei, Backwaren, "
+    "Heberer, McDonald's, Burger King, Lieferando, Wolt, Uber Eats, Starbucks.\n"
     "- Shopping: Amazon, Zalando, MediaMarkt, Saturn, IKEA, H&M, Zara, "
     "Otto, clothing/electronics/home stores.\n"
     "- Health: Apotheke, Arzt, Praxis, Zahnarzt, Krankenkasse (AOK, TK, "
@@ -127,6 +127,12 @@ _CATEGORY_HINTS = (
     "books, courses, Udemy.\n"
     "- Cash: Bargeld, Geldautomat, ATM, Auszahlung, Barabhebung.\n"
     "- Fees: Gebühr, Kontoführung, Entgelt, Zinsen, Bankgebühr.\n"
+    "- Transfers: money sent to a named PRIVATE INDIVIDUAL — a real person's "
+    "first and last name such as 'Max Mustermann' or 'Anna Schmidt'. The "
+    "recipient must be a person, never a business: do NOT use Transfers when the "
+    "name contains a company form (GmbH, AG, UG, mbH, KG, e.V.) or a business "
+    "word (Immobilien, Hausverwaltung, Verwaltung, Versicherung, Bank, Shop). "
+    "Use it only for person-to-person transfers when no other category fits.\n"
     "- Other: only when nothing above plausibly fits."
 )
 
@@ -150,9 +156,18 @@ def _classify_batch(batch):
         "For each transaction:\n"
         "1. Extract the real merchant/payee as a short, clean name (e.g. "
         "'REWE', 'Deutsche Bahn', 'Netflix'). Ignore IBANs, reference numbers "
-        "and terms like 'SEPA Lastschrift' or 'Überweisung'.\n"
+        "and booking terms like 'SEPA Lastschrift' or 'Überweisung'.\n"
         "2. Assign exactly one category from this list:\n"
         f"{', '.join(STANDARD_CATEGORIES)}.\n\n"
+        "Read the merchant name itself for meaning — the words in it are the "
+        "strongest clue and usually settle the category on their own. For "
+        "example a name with 'Bäckerei', 'Feinbäckerei' or 'Konditorei' is a "
+        "bakery, so Dining (e.g. 'Wiener Feinbäckerei Heberer', 'Bäckerei "
+        "Konditorei Voigt'); a name with 'Immobilien' or 'Hausverwaltung' is a "
+        "landlord, so Rent; '... Apotheke' is Health; '... Restaurant' or "
+        "'... Café' is Dining; '... Versicherung' is Insurance. A name ending "
+        "in GmbH/AG is a company, never a personal Transfer. Always decode such "
+        "German/English words in the name before considering 'Other'.\n\n"
         "Use these hints to recognise common German merchants and terms:\n"
         f"{_CATEGORY_HINTS}\n\n"
         "Transactions (JSON):\n"
@@ -290,50 +305,3 @@ def ensure_classified(period=None):
     finally:
         _set_state(running=False)
         _classify_lock.release()
-
-
-def generate_advice(summary):
-    """Suggest concrete things to trim or stop for one period's spending.
-
-    ``summary`` is a ``database.period_summary`` result. Returns
-    ``{"suggestions": [...], "warning": str | None}``; on a missing model the
-    suggestions list is empty and ``warning`` explains why.
-    """
-    categories = [c for c in summary.get("categories", [])
-                  if c["category"] != database.UNCLASSIFIED]
-    if not categories:
-        return {"suggestions": [], "warning": None}
-
-    lines = []
-    for c in categories:
-        limit = (f", budget {c['limit']:.0f} €" if c["limit"] is not None
-                 else ", no budget set")
-        over = (" (OVER budget)" if c["limit"] is not None
-                and c["spent"] > c["limit"] else "")
-        lines.append(f"- {c['category']}: spent {c['spent']:.0f} €{limit}{over}")
-
-    prompt = (
-        "You are a personal budgeting assistant. Here is one period's spending "
-        f"by category (income {summary['income']:.0f} €, expenses "
-        f"{summary['expense']:.0f} €):\n"
-        + "\n".join(lines)
-        + "\n\nSuggest 3 to 5 concrete, specific things the user could trim or "
-        "stop to save money. Prioritise categories that are over budget or "
-        "unusually large. Each suggestion must be one short sentence.\n"
-        'Respond with JSON of the form {"suggestions": ["...", "..."]}.'
-    )
-    result = _chat_json(
-        [
-            {"role": "system", "content": "You give short, practical budgeting "
-             "advice. Reply with JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.6,
-    )
-    suggestions = result.get("suggestions") if isinstance(result, dict) else None
-    if not suggestions:
-        return {"suggestions": [],
-                "warning": "AI advice unavailable (is Ollama running?)."}
-
-    cleaned = [str(s).strip() for s in suggestions if str(s).strip()][:5]
-    return {"suggestions": cleaned, "warning": None}

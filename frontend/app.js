@@ -22,18 +22,15 @@ const I18N = {
     budgetsTitle: "Kategorie-Budgets",
     monthlyLimit: "Monatslimit €",
     set: "Setzen",
-    spendingTitle: "Ausgaben diesen Monat",
+    spendingTitle: "Ausgaben",
     delete: "Löschen",
-    noExpenses: "Noch keine Ausgaben diesen Monat.",
+    noExpenses: "Noch keine Ausgaben in diesem Zeitraum.",
     noBudgets: "Keine Budgets festgelegt.",
     overBudget: "über Budget",
     importing: "Wird importiert ...",
     importResult: "{imported} importiert, {skipped} Duplikat(e) übersprungen (von {parsed} erkannt).",
     classifying: "Kategorisiere Ausgaben mit KI … ({count} übrig)",
     unclassifiedNote: "{count} Ausgabe(n) noch nicht kategorisiert (läuft Ollama?).",
-    adviceTitle: "Spartipps",
-    adviceLoading: "Analysiere Ausgaben ...",
-    noAdvice: "Keine Tipps verfügbar.",
     spendingLabel: "Ausgaben (€)",
     txForCategory: "Transaktionen – {category}",
     close: "Schließen",
@@ -52,18 +49,15 @@ const I18N = {
     budgetsTitle: "Category budgets",
     monthlyLimit: "Monthly limit €",
     set: "Set",
-    spendingTitle: "This month's spending",
+    spendingTitle: "Spending",
     delete: "Delete",
-    noExpenses: "No expenses this month yet.",
+    noExpenses: "No expenses in this period yet.",
     noBudgets: "No budgets set.",
     overBudget: "over budget",
     importing: "Importing ...",
     importResult: "Imported {imported}, skipped {skipped} duplicate(s) (of {parsed} parsed).",
     classifying: "Categorizing spending with AI … ({count} left)",
     unclassifiedNote: "{count} expense(s) not categorized yet (is Ollama running?).",
-    adviceTitle: "Saving tips",
-    adviceLoading: "Analyzing spending ...",
-    noAdvice: "No tips available.",
     spendingLabel: "Spending (€)",
     txForCategory: "Transactions – {category}",
     close: "Close",
@@ -176,6 +170,16 @@ function currentPeriod() {
   return `${year}-${month}`;
 }
 
+// Human-readable label for the selected period, e.g. "März 2025", "2025" or
+// "Bisher dieses Jahr 2025", used in headings that follow the date picker.
+function periodLabel() {
+  const year = yearSelect.value || String(new Date().getFullYear());
+  const month = monthSelect.value;
+  if (month === "year") return year;
+  if (month === "ytd") return `${t("yearToDate")} ${year}`;
+  return `${MONTHS[lang][parseInt(month, 10) - 1]} ${year}`;
+}
+
 // --- API ------------------------------------------------------------------
 
 async function api(path, options = {}) {
@@ -209,6 +213,8 @@ async function loadSummary(isPoll = false) {
   el("card-income").textContent = euro.format(summary.income);
   el("card-expense").textContent = euro.format(summary.expense);
   el("card-balance").textContent = euro.format(summary.balance);
+  // Heading follows the date picker instead of a fixed "this month".
+  el("spending-title").textContent = `${t("spendingTitle")} – ${periodLabel()}`;
 
   // Categories from the summary are the single source for both the breakdown
   // list and the chart; chart wants an `amount` field, so derive it here.
@@ -255,8 +261,6 @@ function updateClassifyStatus(remaining, classifier, period, isPoll) {
   const status = el("classify-status");
   if (!remaining) {
     status.textContent = "";
-    // Categories just settled — refresh advice so it reflects real categories.
-    if (isPoll) loadAdvice();
     return;
   }
 
@@ -302,37 +306,16 @@ async function loadCategories() {
   }
 }
 
+// The trend follows the selected period (see the backend ``/api/trend``), so it
+// is re-fetched whenever the month/year changes rather than fixed on today.
 async function loadTrend() {
-  const { trend } = await api("/api/trend?months=6");
+  const { trend } = await api(`/api/trend?period=${currentPeriod()}`);
   lastTrend = trend;
   renderTrendChart(trend);
 }
 
-async function loadAdvice() {
-  const status = el("advice-status");
-  const list = el("advice-list");
-  status.textContent = t("adviceLoading");
-  list.innerHTML = "";
-  try {
-    const { suggestions, warning } = await api(`/api/advice?period=${currentPeriod()}`);
-    if (!suggestions.length) {
-      status.textContent = warning || t("noAdvice");
-      return;
-    }
-    status.textContent = "";
-    for (const tip of suggestions) {
-      const li = document.createElement("li");
-      li.className = "flex gap-2 border-b border-line py-2 text-[0.9rem]";
-      li.innerHTML = `<span class="flex-none text-accent">•</span><span>${escapeHtml(tip)}</span>`;
-      list.appendChild(li);
-    }
-  } catch (err) {
-    status.textContent = err.message;
-  }
-}
-
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadBudgets(), loadTrend(), loadAdvice()]);
+  await Promise.all([loadSummary(), loadBudgets(), loadTrend()]);
 }
 
 // --- Charts ---------------------------------------------------------------
@@ -519,9 +502,10 @@ el("import-form").addEventListener("submit", async (e) => {
 el("category-detail-close").addEventListener("click", hideCategoryDetail);
 
 function onMonthYearChange() {
-  // loadSummary classifies (if needed), renders the chart and breakdown.
+  // loadSummary classifies (if needed), renders the chart and breakdown;
+  // loadTrend re-anchors the trend line on the newly selected period.
   loadSummary();
-  loadAdvice();
+  loadTrend();
 }
 
 monthSelect.addEventListener("change", onMonthYearChange);
