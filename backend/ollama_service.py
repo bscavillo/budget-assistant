@@ -14,6 +14,7 @@ instead so the rest of the app keeps working offline.
 
 import json
 import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -29,8 +30,15 @@ MODEL = os.environ.get("BUDGET_OLLAMA_MODEL", "gemma4:latest")
 _MAX_CONCURRENCY = max(1, int(os.environ.get("BUDGET_OLLAMA_CONCURRENCY", "4")))
 
 
-def _chat_json(messages):
+def _chat_json(messages, *, temperature=0.0, num_ctx=8192):
     """Send a chat request forcing a JSON response; return a parsed dict.
+
+    ``temperature`` defaults to 0 so classification is deterministic: the same
+    transaction (and the same merchant seen twice) always gets the same answer,
+    which matters most over a whole year where any wobble shows up as the same
+    payee landing in different categories. ``num_ctx`` is large enough that a
+    full batch of JSON assignments is never truncated mid-response (a truncated
+    response is invalid JSON and loses the entire batch).
 
     Returns ``{"_error": "..."}`` if Ollama is unavailable or the response is
     not valid JSON, so callers can degrade gracefully.
@@ -40,7 +48,7 @@ def _chat_json(messages):
             model=MODEL,
             messages=messages,
             format="json",
-            options={"num_ctx": 4096},
+            options={"num_ctx": num_ctx, "temperature": temperature},
             # Keep the model resident between batches; reloading it per call
             # dominates the runtime on slower local setups.
             keep_alive="10m",
@@ -69,6 +77,27 @@ _FALLBACK_CATEGORY = "Other"
 # Transactions are classified in small batches so the model's JSON response
 # never gets truncated by the context/output window.
 _BATCH_SIZE = 20
+
+
+def _dedup_key(tx):
+    """A coarse key that collapses repeat payees so each is classified once.
+
+    A transaction's raw text carries per-booking noise — amounts, IBANs,
+    Mandatsreferenz and terminal numbers — that differs between two payments to
+    the same merchant. Lowercasing and dropping digits/punctuation leaves the
+    stable merchant words ("rewe sagt danke berlin"), so a year full of REWE,
+    Netflix or rent bookings collapses to a handful of representatives. Each is
+    classified once and the answer fans out to every matching row, which both
+    cuts the number of model calls sharply and guarantees the same merchant
+    gets the same category everywhere.
+
+    A key with no letters left (e.g. an all-numeric description) is too generic
+    to safely merge unrelated rows, so the caller keeps those transactions
+    separate.
+    """
+    text = (tx["description"] or tx["category"] or "").lower()
+    text = re.sub(r"[^a-zäöüß ]+", " ", text)
+    return " ".join(text.split())[:80]
 
 
 # Hints that map common German banking/merchant vocabulary to categories. The
@@ -213,8 +242,20 @@ def ensure_classified(period=None):
             return {"classified": 0, "unavailable": False}
 
         _set_state(running=True)
-        batches = [pending[start:start + _BATCH_SIZE]
-                   for start in range(0, len(pending), _BATCH_SIZE)]
+
+        # Collapse repeat payees down to one representative each (see
+        # ``_dedup_key``); we classify representatives and fan the answer back
+        # out to every row that shares the key. Rows with a too-generic key are
+        # kept on their own so unrelated payments never share a category.
+        groups = {}
+        for tx in pending:
+            key = _dedup_key(tx) or f"\0{tx['id']}"
+            groups.setdefault(key, []).append(tx)
+        reps = [members[0] for members in groups.values()]
+        rep_members = {members[0]["id"]: members for members in groups.values()}
+
+        batches = [reps[start:start + _BATCH_SIZE]
+                   for start in range(0, len(reps), _BATCH_SIZE)]
 
         classified = 0
         failed_batches = 0
@@ -230,8 +271,9 @@ def ensure_classified(period=None):
                 if triples is None:
                     failed_batches += 1
                     continue
-                updates = [(tx["id"], category, merchant)
-                           for tx, category, merchant in triples]
+                updates = [(member["id"], category, merchant)
+                           for rep, category, merchant in triples
+                           for member in rep_members[rep["id"]]]
                 if updates:
                     database.set_classifications(updates)
                     classified += len(updates)
@@ -285,7 +327,8 @@ def generate_advice(summary):
             {"role": "system", "content": "You give short, practical budgeting "
              "advice. Reply with JSON only."},
             {"role": "user", "content": prompt},
-        ]
+        ],
+        temperature=0.6,
     )
     suggestions = result.get("suggestions") if isinstance(result, dict) else None
     if not suggestions:
