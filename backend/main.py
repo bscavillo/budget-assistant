@@ -6,7 +6,7 @@ Run with:  uvicorn main:app --reload  (from the backend directory)
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -86,18 +86,27 @@ def remove_budget(category: str):
 
 @app.get("/api/summary")
 def get_summary(period: str | None = None):
+    """Return spending grouped by real category for the period.
+
+    Any not-yet-classified expenses in the period are classified and persisted
+    first, so categories "just appear" on view without a manual step. Already
+    classified periods make no AI call, so repeat loads are instant.
+    """
+    ollama_service.ensure_classified(period)
     return database.period_summary(period)
 
 
-@app.get("/api/categorized-spending")
-def categorized_spending(period: str | None = None):
-    """AI-grouped spending by standard category for the given period.
+@app.get("/api/advice")
+def get_advice(period: str | None = None):
+    """AI suggestions on what to trim or stop for the given period."""
+    summary = database.period_summary(period)
+    return ollama_service.generate_advice(summary)
 
-    ``period`` may be a month (``YYYY-MM``), a full year (``YYYY``), or
-    year-to-date (``YYYY-ytd``).
-    """
-    expenses = database.expenses_for_period(period)
-    return ollama_service.categorize_spending(expenses)
+
+@app.get("/api/categories")
+def get_categories():
+    """The canonical spending categories used for classification and budgets."""
+    return {"categories": ollama_service.STANDARD_CATEGORIES}
 
 
 @app.get("/api/trend")
@@ -112,11 +121,13 @@ def latest_month():
 
 
 @app.post("/api/import/postbank")
-async def import_postbank(file: UploadFile = File(...)):
+async def import_postbank(background: BackgroundTasks, file: UploadFile = File(...)):
     """Import transactions from a Postbank CSV export.
 
     Parses the file, skips rows already present (so overlapping exports don't
-    create duplicates), and inserts the rest.
+    create duplicates), inserts the rest, and schedules background AI
+    classification for the months that gained transactions so categories are
+    usually ready by the time the user looks.
     """
     raw = await file.read()
     try:
@@ -126,6 +137,7 @@ async def import_postbank(file: UploadFile = File(...)):
 
     imported = 0
     skipped = 0
+    months = set()
     for tx in parsed:
         if database.transaction_exists(tx["date"], tx["type"], tx["amount"],
                                        tx["description"]):
@@ -134,6 +146,11 @@ async def import_postbank(file: UploadFile = File(...)):
         database.add_transaction(tx["date"], tx["type"], tx["category"],
                                  tx["amount"], tx["description"])
         imported += 1
+        if tx["type"] == "expense":
+            months.add(tx["date"][:7])  # YYYY-MM
+
+    for month in months:
+        background.add_task(ollama_service.ensure_classified, month)
 
     return {"parsed": len(parsed), "imported": imported, "skipped": skipped}
 

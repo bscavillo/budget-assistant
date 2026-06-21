@@ -15,13 +15,11 @@ const I18N = {
     expenses: "Ausgaben",
     balance: "Saldo",
     analysis: "Analyse",
-    analyze: "Ausgaben mit KI kategorisieren",
     byCategory: "Ausgaben nach Kategorie",
     trendTitle: "Verlauf (Einnahmen / Ausgaben)",
     importTitle: "Aus Postbank importieren",
     importBtn: "CSV importieren",
     budgetsTitle: "Kategorie-Budgets",
-    category: "Kategorie",
     monthlyLimit: "Monatslimit €",
     set: "Setzen",
     spendingTitle: "Ausgaben diesen Monat",
@@ -31,9 +29,10 @@ const I18N = {
     overBudget: "über Budget",
     importing: "Wird importiert ...",
     importResult: "{imported} importiert, {skipped} Duplikat(e) übersprungen (von {parsed} erkannt).",
-    analyzing: "Kategorisiere Ausgaben mit KI (kann eine Minute dauern) ...",
-    analyzeDone: "Kategorisierung abgeschlossen.",
-    noChartData: "Keine Daten zum Anzeigen.",
+    unclassifiedNote: "{count} Ausgabe(n) noch nicht kategorisiert (läuft Ollama?).",
+    adviceTitle: "Spartipps",
+    adviceLoading: "Analysiere Ausgaben ...",
+    noAdvice: "Keine Tipps verfügbar.",
     spendingLabel: "Ausgaben (€)",
     txForCategory: "Transaktionen – {category}",
     close: "Schließen",
@@ -45,13 +44,11 @@ const I18N = {
     expenses: "Expenses",
     balance: "Balance",
     analysis: "Analysis",
-    analyze: "Categorize spending with AI",
     byCategory: "Spending by category",
     trendTitle: "Trend (income / expenses)",
     importTitle: "Import from Postbank",
     importBtn: "Import CSV",
     budgetsTitle: "Category budgets",
-    category: "Category",
     monthlyLimit: "Monthly limit €",
     set: "Set",
     spendingTitle: "This month's spending",
@@ -61,9 +58,10 @@ const I18N = {
     overBudget: "over budget",
     importing: "Importing ...",
     importResult: "Imported {imported}, skipped {skipped} duplicate(s) (of {parsed} parsed).",
-    analyzing: "Categorizing spending with AI (this can take a minute) ...",
-    analyzeDone: "Categorization complete.",
-    noChartData: "No data to display.",
+    unclassifiedNote: "{count} expense(s) not categorized yet (is Ollama running?).",
+    adviceTitle: "Saving tips",
+    adviceLoading: "Analyzing spending ...",
+    noAdvice: "No tips available.",
     spendingLabel: "Spending (€)",
     txForCategory: "Transactions – {category}",
     close: "Close",
@@ -196,6 +194,23 @@ async function loadSummary() {
   el("card-expense").textContent = euro.format(summary.expense);
   el("card-balance").textContent = euro.format(summary.balance);
 
+  // Categories from the summary are the single source for both the breakdown
+  // list and the chart; chart wants an `amount` field, so derive it here.
+  lastCategories = summary.categories.map((c) => ({
+    category: c.category,
+    amount: c.spent,
+    transactions: c.transactions || [],
+  }));
+  if (lastCategories.length) {
+    renderCategoryChart(lastCategories);
+  }
+
+  // ensure_classified runs synchronously server-side, so anything still
+  // unclassified means the model was unreachable rather than "in progress".
+  el("classify-status").textContent = summary.unclassified_count
+    ? t("unclassifiedNote", { count: summary.unclassified_count })
+    : "";
+
   const breakdown = el("category-breakdown");
   breakdown.innerHTML = "";
   if (!summary.categories.length) {
@@ -233,17 +248,20 @@ async function loadBudgets() {
       <button class="del cursor-pointer border-0 bg-transparent px-1.5 text-muted hover:text-expense" data-category="${escapeHtml(b.category)}">${t("delete")}</button></span>`;
     list.appendChild(li);
   }
-  refreshCategoryList(budgets);
 }
 
-function refreshCategoryList(budgets) {
-  const datalist = el("category-list");
-  datalist.innerHTML = "";
-  budgets.map((b) => b.category).sort().forEach((c) => {
+// Populate the budget category dropdown from the canonical category list so
+// budgets always use the same vocabulary as the AI classification.
+async function loadCategories() {
+  const { categories } = await api("/api/categories");
+  const select = el("budget-category");
+  select.innerHTML = "";
+  for (const c of categories) {
     const opt = document.createElement("option");
     opt.value = c;
-    datalist.appendChild(opt);
-  });
+    opt.textContent = c;
+    select.appendChild(opt);
+  }
 }
 
 async function loadTrend() {
@@ -252,8 +270,31 @@ async function loadTrend() {
   renderTrendChart(trend);
 }
 
+async function loadAdvice() {
+  const status = el("advice-status");
+  const list = el("advice-list");
+  status.textContent = t("adviceLoading");
+  list.innerHTML = "";
+  try {
+    const { suggestions, warning } = await api(`/api/advice?period=${currentPeriod()}`);
+    if (!suggestions.length) {
+      status.textContent = warning || t("noAdvice");
+      return;
+    }
+    status.textContent = "";
+    for (const tip of suggestions) {
+      const li = document.createElement("li");
+      li.className = "flex gap-2 border-b border-line py-2 text-[0.9rem]";
+      li.innerHTML = `<span class="flex-none text-accent">•</span><span>${escapeHtml(tip)}</span>`;
+      list.appendChild(li);
+    }
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadBudgets(), loadTrend()]);
+  await Promise.all([loadSummary(), loadBudgets(), loadTrend(), loadAdvice()]);
 }
 
 // --- Charts ---------------------------------------------------------------
@@ -421,33 +462,12 @@ el("import-form").addEventListener("submit", async (e) => {
   }
 });
 
-async function analyzeSpending() {
-  const status = el("analyze-status");
-  const btn = el("analyze-btn");
-  btn.disabled = true;
-  status.textContent = t("analyzing");
-  try {
-    const data = await api(`/api/categorized-spending?period=${currentPeriod()}`);
-    lastCategories = data.categories;
-    if (!data.categories.length) {
-      status.textContent = t("noChartData");
-    } else {
-      renderCategoryChart(data.categories);
-      status.textContent = data.warning || t("analyzeDone");
-    }
-  } catch (err) {
-    status.textContent = err.message;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-el("analyze-btn").addEventListener("click", analyzeSpending);
 el("category-detail-close").addEventListener("click", hideCategoryDetail);
 
 function onMonthYearChange() {
+  // loadSummary classifies (if needed), renders the chart and breakdown.
   loadSummary();
-  analyzeSpending();
+  loadAdvice();
 }
 
 monthSelect.addEventListener("change", onMonthYearChange);
@@ -458,6 +478,7 @@ yearSelect.addEventListener("change", onMonthYearChange);
 async function init() {
   populateYearOptions();
   applyTranslations();
+  loadCategories();
   setMonthYear(new Date().toISOString().slice(0, 7));
   try {
     const { month } = await api("/api/latest-month");
@@ -466,7 +487,6 @@ async function init() {
     /* fall back to the current month */
   }
   refreshAll();
-  analyzeSpending();
 }
 
 init();

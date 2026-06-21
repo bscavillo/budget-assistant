@@ -26,7 +26,7 @@ def get_connection():
 
 
 def init_db():
-    """Create tables if they do not exist yet."""
+    """Create tables if they do not exist yet, then apply migrations."""
     with get_connection() as conn:
         conn.execute(
             """
@@ -48,6 +48,24 @@ def init_db():
             )
             """
         )
+        _migrate(conn)
+
+
+def _migrate(conn):
+    """Add columns introduced after the initial schema, idempotently.
+
+    ``category`` keeps the raw bank ``Umsatzart`` text from the import; the
+    real, AI-assigned spending category lives in ``std_category`` (NULL until
+    a transaction has been classified) and the cleaned-up merchant name in
+    ``merchant``. Existing rows simply start unclassified and get filled in by
+    the lazy classification pass.
+    """
+    existing = {row["name"] for row in
+                conn.execute("PRAGMA table_info(transactions)").fetchall()}
+    if "std_category" not in existing:
+        conn.execute("ALTER TABLE transactions ADD COLUMN std_category TEXT")
+    if "merchant" not in existing:
+        conn.execute("ALTER TABLE transactions ADD COLUMN merchant TEXT")
 
 
 # --- Transactions ---------------------------------------------------------
@@ -94,6 +112,39 @@ def transaction_exists(tx_date, tx_type, amount, description):
             (tx_date, tx_type, amount, description),
         ).fetchone()
         return row is not None
+
+
+# --- Classification -------------------------------------------------------
+
+def unclassified_expenses(period=None):
+    """Return expense transactions in the period that lack a real category.
+
+    These are the rows the AI still needs to look at (``std_category IS NULL``).
+    """
+    condition, params = _period_clause(period)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM transactions
+            WHERE type = 'expense' AND std_category IS NULL AND {condition}
+            ORDER BY date DESC, id DESC
+            """,
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def set_classifications(results):
+    """Persist AI classifications for many transactions in one transaction.
+
+    ``results`` is an iterable of ``(id, std_category, merchant)`` tuples.
+    """
+    with get_connection() as conn:
+        conn.executemany(
+            "UPDATE transactions SET std_category = ?, merchant = ? WHERE id = ?",
+            [(std_category, merchant, tx_id)
+             for tx_id, std_category, merchant in results],
+        )
 
 
 # --- Budgets --------------------------------------------------------------
@@ -157,25 +208,6 @@ def latest_transaction_month():
         return row["month"] if row else None
 
 
-def expenses_for_period(period=None):
-    """Return all expense transactions for the given reporting period.
-
-    See ``_period_clause`` for the accepted ``period`` formats (month, full
-    year, or year-to-date).
-    """
-    condition, params = _period_clause(period)
-    with get_connection() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT * FROM transactions
-            WHERE type = 'expense' AND {condition}
-            ORDER BY date DESC, id DESC
-            """,
-            params,
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-
 def monthly_totals(months=6):
     """Return income/expense totals per month for the last ``months`` months.
 
@@ -217,8 +249,16 @@ def monthly_totals(months=6):
     return list(reversed(sequence))
 
 
+UNCLASSIFIED = "Unclassified"
+
+
 def period_summary(period=None):
     """Return income/expense totals and per-category spending for a period.
+
+    Spending is grouped by the real, AI-assigned ``std_category`` (rows not yet
+    classified fold into an ``Unclassified`` bucket). Each category carries its
+    own transactions so the UI can drill in without a second request, and the
+    relevant budget (matched on the same category) for over-budget flagging.
 
     ``period`` accepts the formats described in ``_period_clause`` (month, full
     year, or year-to-date); defaults to the current month.
@@ -236,13 +276,12 @@ def period_summary(period=None):
             params,
         ).fetchall()
 
-        per_category = conn.execute(
+        expenses = conn.execute(
             f"""
-            SELECT category, COALESCE(SUM(amount), 0) AS spent
+            SELECT id, date, description, merchant, amount, std_category
             FROM transactions
             WHERE type = 'expense' AND {condition}
-            GROUP BY category
-            ORDER BY spent DESC
+            ORDER BY amount DESC
             """,
             params,
         ).fetchall()
@@ -258,18 +297,38 @@ def period_summary(period=None):
         elif row["type"] == "expense":
             expense = row["total"]
 
+    grouped = {}
+    unclassified_count = 0
+    for row in expenses:
+        category = row["std_category"] or UNCLASSIFIED
+        if row["std_category"] is None:
+            unclassified_count += 1
+        bucket = grouped.setdefault(category, {"spent": 0.0, "transactions": []})
+        bucket["spent"] += row["amount"]
+        bucket["transactions"].append(
+            {
+                "id": row["id"],
+                "date": row["date"],
+                # Prefer the cleaned-up merchant; fall back to the raw text.
+                "description": row["merchant"] or row["description"],
+                "amount": round(row["amount"], 2),
+            }
+        )
+
     categories = []
-    for row in per_category:
-        spent = row["spent"]
-        limit = budgets.get(row["category"])
+    for category, bucket in grouped.items():
+        spent = bucket["spent"]
+        limit = budgets.get(category)
         categories.append(
             {
-                "category": row["category"],
+                "category": category,
                 "spent": round(spent, 2),
                 "limit": limit,
                 "remaining": round(limit - spent, 2) if limit is not None else None,
+                "transactions": bucket["transactions"],
             }
         )
+    categories.sort(key=lambda c: c["spent"], reverse=True)
 
     return {
         "period": period or date.today().strftime("%Y-%m"),
@@ -277,4 +336,5 @@ def period_summary(period=None):
         "expense": round(expense, 2),
         "balance": round(income - expense, 2),
         "categories": categories,
+        "unclassified_count": unclassified_count,
     }

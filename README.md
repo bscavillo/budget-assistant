@@ -73,9 +73,3 @@ overlapping exports don't create duplicates.
 If your export isn't recognized, the exact column names may differ from what the
 parser expects -- adjust the keyword lists in `backend/postbank_import.py`.
 
-## Roadmap
-
-- [ ] Automatic bank sync via a PSD2 aggregator (e.g. GoCardless/Nordigen) for
-      Postbank and other German banks
-- [ ] Recurring transactions
-- [ ] Charts / trends over multiple months

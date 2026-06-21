@@ -82,9 +82,8 @@
     <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <h2 class="m-0 text-[1.05rem]" data-i18n="analysis">Analyse</h2>
-        <button id="analyze-btn" class="btn" data-i18n="analyze">Ausgaben mit KI kategorisieren</button>
+        <p id="classify-status" class="meta"></p>
       </div>
-      <p id="analyze-status" class="meta"></p>
       <div class="mt-4 grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
         <div>
           <h3 class="m-0 mb-2 text-[0.9rem] font-semibold text-muted" data-i18n="byCategory">Ausgaben nach Kategorie</h3>
@@ -104,6 +103,12 @@
       </div>
     </section>
 
+    <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
+      <h2 class="m-0 mb-3 text-[1.05rem]" data-i18n="adviceTitle">Spartipps</h2>
+      <p id="advice-status" class="meta"></p>
+      <ul id="advice-list" class="m-0 list-none p-0"></ul>
+    </section>
+
     <div class="grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
       <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
         <h2 class="m-0 mb-3 text-[1.05rem]" data-i18n="importTitle">Aus Postbank importieren</h2>
@@ -115,11 +120,10 @@
 
         <h2 class="mb-3 mt-5 text-[1.05rem]" data-i18n="budgetsTitle">Kategorie-Budgets</h2>
         <form id="budget-form" class="mb-3 flex flex-wrap items-end gap-3">
-          <input type="text" id="budget-category" class="field min-w-0 flex-1" data-i18n-placeholder="category" placeholder="Kategorie" list="category-list" required />
+          <select id="budget-category" class="field min-w-0 flex-1" required></select>
           <input type="number" id="budget-limit" class="field min-w-0 flex-1" data-i18n-placeholder="monthlyLimit" placeholder="Monatslimit €" min="0" step="0.01" required />
           <button type="submit" class="btn flex-none" data-i18n="set">Setzen</button>
         </form>
-        <datalist id="category-list"></datalist>
         <ul id="budget-list" class="budget-list m-0 list-none p-0"></ul>
       </section>
 

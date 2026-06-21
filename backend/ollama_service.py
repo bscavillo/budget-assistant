@@ -1,8 +1,15 @@
 """AI helpers backed by a local Ollama model.
 
-The model classifies imported bank transactions into standard spending
-categories. It never raises on a missing Ollama server; callers receive a
-graceful fallback instead so the rest of the app keeps working offline.
+Two jobs run through here:
+
+* **Classification** — turn a messy German bank transaction (full of SEPA/IBAN
+  boilerplate) into a clean merchant name and one real spending category, which
+  the caller persists so the work is never repeated.
+* **Advice** — look at a period's category spending against its budgets and
+  suggest concrete things to trim or stop.
+
+Neither ever raises on a missing Ollama server; callers get a graceful fallback
+instead so the rest of the app keeps working offline.
 """
 
 import json
@@ -10,6 +17,8 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 import ollama
+
+import database
 
 MODEL = os.environ.get("BUDGET_OLLAMA_MODEL", "gemma4:latest")
 
@@ -37,12 +46,20 @@ def _chat_json(messages):
         return {"_error": str(exc)}
 
 
-# Standard personal-finance categories the AI maps transactions into.
+# Curated, canonical spending categories. This is the single source of truth:
+# the model must classify into exactly these, off-list answers are rejected,
+# and the budget UI offers exactly this list. Tuned for a German account
+# (Insurance/Versicherung and Cash/Bargeld are split out because they are
+# common and distinct on German statements).
 STANDARD_CATEGORIES = [
     "Groceries", "Rent", "Utilities", "Transport", "Dining", "Shopping",
-    "Health", "Entertainment", "Subscriptions", "Education", "Cash",
-    "Fees", "Other",
+    "Health", "Insurance", "Entertainment", "Subscriptions", "Education",
+    "Cash", "Fees", "Other",
 ]
+
+# The bucket used for anything the model cannot place; kept off the list above
+# so it is only ever assigned as a deliberate last resort.
+_FALLBACK_CATEGORY = "Other"
 
 
 # Transactions are classified in small batches so the model's JSON response
@@ -68,6 +85,8 @@ _CATEGORY_HINTS = (
     "Otto, clothing/electronics/home stores.\n"
     "- Health: Apotheke, Arzt, Praxis, Zahnarzt, Krankenkasse (AOK, TK, "
     "Barmer), Fitnessstudio, McFit.\n"
+    "- Insurance: Versicherung, Allianz, HUK, AXA, Haftpflicht, Hausrat, "
+    "Kfz-Versicherung, Lebensversicherung.\n"
     "- Entertainment: Kino, Konzert, Steam, PlayStation, Eventim, museums, games.\n"
     "- Subscriptions: Netflix, Spotify, Disney+, Amazon Prime, YouTube "
     "Premium, Audible, recurring monthly memberships.\n"
@@ -80,29 +99,40 @@ _CATEGORY_HINTS = (
 
 
 def _classify_batch(batch):
-    """Return a list of (transaction, category) for one batch, or None on failure."""
+    """Classify one batch of transactions.
+
+    Returns a list of ``(transaction, std_category, merchant)`` tuples, or
+    ``None`` if the model was unavailable / gave no usable answer. The model
+    does the "deep analysis": it strips the SEPA/IBAN/Mandatsreferenz noise to
+    recover the real merchant, then picks the category from it.
+    """
     listing = [
-        {"i": i, "text": (t["description"] or t["category"])[:140]}
+        {"i": i, "text": (t["description"] or t["category"])[:160]}
         for i, t in enumerate(batch)
     ]
     prompt = (
-        "These are German bank transactions; the descriptions are in German and "
-        "contain German merchant names, banking terms and abbreviations.\n\n"
-        "Assign each transaction to exactly one category from this list:\n"
+        "These are German bank transactions. The text is raw and noisy: it "
+        "mixes SEPA/IBAN/BIC codes, Mandatsreferenz numbers and booking "
+        "boilerplate with the actual merchant or payee.\n\n"
+        "For each transaction:\n"
+        "1. Extract the real merchant/payee as a short, clean name (e.g. "
+        "'REWE', 'Deutsche Bahn', 'Netflix'). Ignore IBANs, reference numbers "
+        "and terms like 'SEPA Lastschrift' or 'Überweisung'.\n"
+        "2. Assign exactly one category from this list:\n"
         f"{', '.join(STANDARD_CATEGORIES)}.\n\n"
         "Use these hints to recognise common German merchants and terms:\n"
         f"{_CATEGORY_HINTS}\n\n"
         "Transactions (JSON):\n"
         f"{json.dumps(listing, ensure_ascii=False)}\n\n"
         'Respond with JSON of the form {"assignments": [{"i": 0, '
-        '"category": "Groceries"}, ...]} covering every transaction index. '
-        "Pick the single best fit and only use 'Other' as a last resort when no "
-        "other category is plausible."
+        '"merchant": "REWE", "category": "Groceries"}, ...]} covering every '
+        "transaction index. Pick the single best category and only use 'Other' "
+        "as a last resort when no other category is plausible."
     )
     result = _chat_json(
         [
-            {"role": "system", "content": "You categorize German bank "
-             "transactions into spending categories. Reply with JSON only."},
+            {"role": "system", "content": "You clean up and categorize German "
+             "bank transactions. Reply with JSON only."},
             {"role": "user", "content": prompt},
         ]
     )
@@ -111,81 +141,105 @@ def _classify_batch(batch):
         return None
 
     valid = set(STANDARD_CATEGORIES)
-    pairs = []
+    triples = []
     for a in assignments:
         try:
             idx = int(a["i"])
             category = a["category"]
         except (KeyError, TypeError, ValueError):
             continue
-        if 0 <= idx < len(batch):
-            pairs.append((batch[idx], category if category in valid else "Other"))
-    return pairs
+        if not 0 <= idx < len(batch):
+            continue
+        merchant = (a.get("merchant") or "").strip()[:80] or None
+        triples.append((
+            batch[idx],
+            category if category in valid else _FALLBACK_CATEGORY,
+            merchant,
+        ))
+    return triples
 
 
-def categorize_spending(expenses):
-    """Group expense transactions into standard categories using the model.
+def ensure_classified(period=None):
+    """Classify and persist any not-yet-classified expenses in the period.
 
-    The model only assigns each transaction to a category; the amounts are
-    summed in Python so totals are always accurate. Transactions are processed
-    in small batches; any batch the model can't classify falls back to its
-    original imported category. Returns a sorted ``categories`` list and an
-    optional ``warning``.
+    This is the heart of the "it just happens" flow: it is called whenever a
+    period is viewed (and after an import). Already-classified periods make no
+    Ollama call at all, so repeat views are instant and the work is never
+    redone. Returns a small status dict for the caller/UI.
     """
-    if not expenses:
-        return {"categories": [], "warning": None}
+    pending = database.unclassified_expenses(period)
+    if not pending:
+        return {"classified": 0, "unavailable": False}
 
-    # Cap total work; classify the largest expenses first.
-    items = sorted(expenses, key=lambda t: t["amount"], reverse=True)[:200]
-
-    totals = {}
-    transactions = {}
-    failed_batches = 0
-
-    batches = [items[start:start + _BATCH_SIZE]
-               for start in range(0, len(items), _BATCH_SIZE)]
-    total_batches = len(batches)
+    batches = [pending[start:start + _BATCH_SIZE]
+               for start in range(0, len(pending), _BATCH_SIZE)]
 
     # Run the independent batches concurrently; each Ollama call is blocking
     # I/O, so a small thread pool overlaps the per-request round-trips.
-    with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENCY, total_batches)) as pool:
-        results = pool.map(_classify_batch, batches)
+    with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENCY, len(batches))) as pool:
+        results = list(pool.map(_classify_batch, batches))
 
-    for batch, pairs in zip(batches, results):
-        if pairs is None:
+    updates = []
+    failed_batches = 0
+    for triples in results:
+        if triples is None:
             failed_batches += 1
-            pairs = [(t, t["category"] or "Other") for t in batch]
-        for tx, category in pairs:
-            totals[category] = totals.get(category, 0.0) + tx["amount"]
-            transactions.setdefault(category, []).append(
-                {
-                    "id": tx["id"],
-                    "date": tx["date"],
-                    "description": tx["description"],
-                    "amount": round(tx["amount"], 2),
-                }
-            )
+            continue
+        for tx, category, merchant in triples:
+            updates.append((tx["id"], category, merchant))
 
-    if failed_batches == total_batches:
-        warning = "AI categorization unavailable; showing original categories."
-    elif failed_batches:
-        warning = (f"{failed_batches} of {total_batches} batches used original "
-                   "categories (AI response incomplete).")
-    else:
-        warning = None
+    if updates:
+        database.set_classifications(updates)
 
-    categories = sorted(
-        (
-            {
-                "category": c,
-                "amount": round(totals[c], 2),
-                "transactions": sorted(
-                    transactions[c], key=lambda x: x["amount"], reverse=True
-                ),
-            }
-            for c in totals
-        ),
-        key=lambda x: x["amount"],
-        reverse=True,
+    return {
+        "classified": len(updates),
+        # True only when nothing could be classified (Ollama down); the caller
+        # can surface this, while a partial failure just retries on next view.
+        "unavailable": failed_batches == len(batches),
+    }
+
+
+def generate_advice(summary):
+    """Suggest concrete things to trim or stop for one period's spending.
+
+    ``summary`` is a ``database.period_summary`` result. Returns
+    ``{"suggestions": [...], "warning": str | None}``; on a missing model the
+    suggestions list is empty and ``warning`` explains why.
+    """
+    categories = [c for c in summary.get("categories", [])
+                  if c["category"] != database.UNCLASSIFIED]
+    if not categories:
+        return {"suggestions": [], "warning": None}
+
+    lines = []
+    for c in categories:
+        limit = (f", budget {c['limit']:.0f} €" if c["limit"] is not None
+                 else ", no budget set")
+        over = (" (OVER budget)" if c["limit"] is not None
+                and c["spent"] > c["limit"] else "")
+        lines.append(f"- {c['category']}: spent {c['spent']:.0f} €{limit}{over}")
+
+    prompt = (
+        "You are a personal budgeting assistant. Here is one period's spending "
+        f"by category (income {summary['income']:.0f} €, expenses "
+        f"{summary['expense']:.0f} €):\n"
+        + "\n".join(lines)
+        + "\n\nSuggest 3 to 5 concrete, specific things the user could trim or "
+        "stop to save money. Prioritise categories that are over budget or "
+        "unusually large. Each suggestion must be one short sentence.\n"
+        'Respond with JSON of the form {"suggestions": ["...", "..."]}.'
     )
-    return {"categories": categories, "warning": warning}
+    result = _chat_json(
+        [
+            {"role": "system", "content": "You give short, practical budgeting "
+             "advice. Reply with JSON only."},
+            {"role": "user", "content": prompt},
+        ]
+    )
+    suggestions = result.get("suggestions") if isinstance(result, dict) else None
+    if not suggestions:
+        return {"suggestions": [],
+                "warning": "AI advice unavailable (is Ollama running?)."}
+
+    cleaned = [str(s).strip() for s in suggestions if str(s).strip()][:5]
+    return {"suggestions": cleaned, "warning": None}
