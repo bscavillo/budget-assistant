@@ -7,7 +7,6 @@ env/
 
 # Local database (contains personal financial data)
 backend/budget.db
-*.bak
 
 # Editor / OS
 .vscode/
