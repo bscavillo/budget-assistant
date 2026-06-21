@@ -85,15 +85,22 @@ def remove_budget(category: str):
 # --- Summary & AI ---------------------------------------------------------
 
 @app.get("/api/summary")
-def get_summary(period: str | None = None):
+def get_summary(period: str | None = None, *, background: BackgroundTasks):
     """Return spending grouped by real category for the period.
 
-    Any not-yet-classified expenses in the period are classified and persisted
-    first, so categories "just appear" on view without a manual step. Already
-    classified periods make no AI call, so repeat loads are instant.
+    Classification of any not-yet-categorized expenses is kicked off in the
+    background (never on the request path, since it can take a while) and the
+    current summary is returned immediately. ``unclassified_count`` lets the UI
+    poll and watch categories fill in. Already-classified periods queue no work,
+    so repeat loads are instant.
     """
-    ollama_service.ensure_classified(period)
-    return database.period_summary(period)
+    summary = database.period_summary(period)
+    if summary["unclassified_count"]:
+        background.add_task(ollama_service.ensure_classified, period)
+    # Surface classifier state so the UI can keep polling through slow batches
+    # but stop (and warn) when Ollama is actually unreachable.
+    summary["classifier"] = ollama_service.classifier_status()
+    return summary
 
 
 @app.get("/api/advice")

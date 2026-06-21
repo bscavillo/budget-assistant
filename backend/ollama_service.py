@@ -14,7 +14,8 @@ instead so the rest of the app keeps working offline.
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import ollama
 
@@ -40,6 +41,9 @@ def _chat_json(messages):
             messages=messages,
             format="json",
             options={"num_ctx": 4096},
+            # Keep the model resident between batches; reloading it per call
+            # dominates the runtime on slower local setups.
+            keep_alive="10m",
         )
         return json.loads(response["message"]["content"])
     except Exception as exc:  # noqa: BLE001 - surface any failure to the caller
@@ -159,44 +163,91 @@ def _classify_batch(batch):
     return triples
 
 
+# Only one classification pass runs at a time. The endpoint fires this as a
+# background task on every view, and the UI polls while work remains, so
+# without this guard repeated polls would pile up concurrent passes that all
+# fight over the single local model. A non-blocking acquire means extra calls
+# simply return instead of queueing.
+_classify_lock = threading.Lock()
+
+# Shared, pollable state so the UI can tell "still working" (a slow batch can
+# take minutes) apart from "Ollama is unreachable", without guessing from
+# timing. ``failed`` is set when a whole pass classified nothing.
+_state_lock = threading.Lock()
+_running = False
+_failed = False
+
+
+def classifier_status():
+    """Return whether a classification pass is running and if the last failed."""
+    with _state_lock:
+        return {"running": _running, "failed": _failed}
+
+
+def _set_state(running=None, failed=None):
+    global _running, _failed
+    with _state_lock:
+        if running is not None:
+            _running = running
+        if failed is not None:
+            _failed = failed
+
+
 def ensure_classified(period=None):
     """Classify and persist any not-yet-classified expenses in the period.
 
-    This is the heart of the "it just happens" flow: it is called whenever a
-    period is viewed (and after an import). Already-classified periods make no
-    Ollama call at all, so repeat views are instant and the work is never
-    redone. Returns a small status dict for the caller/UI.
+    This is the heart of the "it just happens" flow: it is fired as a
+    background task whenever a period is viewed (and after an import). It must
+    never be awaited on the request path — it can take a while — so callers
+    return the current summary immediately and let the UI poll as categories
+    fill in. Results are persisted per batch so that progress is visible.
+    Already-classified periods make no Ollama call, so the work is never
+    redone. Returns a small status dict.
     """
-    pending = database.unclassified_expenses(period)
-    if not pending:
-        return {"classified": 0, "unavailable": False}
+    # If a pass is already running, let it finish rather than starting another.
+    if not _classify_lock.acquire(blocking=False):
+        return {"classified": 0, "unavailable": False, "running": True}
+    try:
+        pending = database.unclassified_expenses(period)
+        if not pending:
+            return {"classified": 0, "unavailable": False}
 
-    batches = [pending[start:start + _BATCH_SIZE]
-               for start in range(0, len(pending), _BATCH_SIZE)]
+        _set_state(running=True)
+        batches = [pending[start:start + _BATCH_SIZE]
+                   for start in range(0, len(pending), _BATCH_SIZE)]
 
-    # Run the independent batches concurrently; each Ollama call is blocking
-    # I/O, so a small thread pool overlaps the per-request round-trips.
-    with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENCY, len(batches))) as pool:
-        results = list(pool.map(_classify_batch, batches))
+        classified = 0
+        failed_batches = 0
+        # Run the independent batches concurrently; each Ollama call is blocking
+        # I/O, so a small thread pool overlaps the per-request round-trips. Each
+        # batch is persisted as soon as it returns so a polling UI sees steady
+        # progress instead of nothing until the whole period is done.
+        with ThreadPoolExecutor(
+                max_workers=min(_MAX_CONCURRENCY, len(batches))) as pool:
+            futures = [pool.submit(_classify_batch, batch) for batch in batches]
+            for future in as_completed(futures):
+                triples = future.result()
+                if triples is None:
+                    failed_batches += 1
+                    continue
+                updates = [(tx["id"], category, merchant)
+                           for tx, category, merchant in triples]
+                if updates:
+                    database.set_classifications(updates)
+                    classified += len(updates)
 
-    updates = []
-    failed_batches = 0
-    for triples in results:
-        if triples is None:
-            failed_batches += 1
-            continue
-        for tx, category, merchant in triples:
-            updates.append((tx["id"], category, merchant))
-
-    if updates:
-        database.set_classifications(updates)
-
-    return {
-        "classified": len(updates),
-        # True only when nothing could be classified (Ollama down); the caller
-        # can surface this, while a partial failure just retries on next view.
-        "unavailable": failed_batches == len(batches),
-    }
+        # A pass that touched batches but saved nothing means Ollama is down /
+        # erroring; a pass that saved at least one clears the failed flag.
+        _set_state(failed=(classified == 0 and failed_batches > 0))
+        return {
+            "classified": classified,
+            # True only when nothing could be classified (Ollama down); a
+            # partial failure just retries on the next view.
+            "unavailable": failed_batches == len(batches),
+        }
+    finally:
+        _set_state(running=False)
+        _classify_lock.release()
 
 
 def generate_advice(summary):

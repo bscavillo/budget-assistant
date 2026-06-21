@@ -29,6 +29,7 @@ const I18N = {
     overBudget: "über Budget",
     importing: "Wird importiert ...",
     importResult: "{imported} importiert, {skipped} Duplikat(e) übersprungen (von {parsed} erkannt).",
+    classifying: "Kategorisiere Ausgaben mit KI … ({count} übrig)",
     unclassifiedNote: "{count} Ausgabe(n) noch nicht kategorisiert (läuft Ollama?).",
     adviceTitle: "Spartipps",
     adviceLoading: "Analysiere Ausgaben ...",
@@ -58,6 +59,7 @@ const I18N = {
     overBudget: "over budget",
     importing: "Importing ...",
     importResult: "Imported {imported}, skipped {skipped} duplicate(s) (of {parsed} parsed).",
+    classifying: "Categorizing spending with AI … ({count} left)",
     unclassifiedNote: "{count} expense(s) not categorized yet (is Ollama running?).",
     adviceTitle: "Saving tips",
     adviceLoading: "Analyzing spending ...",
@@ -88,6 +90,13 @@ const yearSelect = el("year-select");
 // Cache of the latest fetched data so charts can re-render on language change.
 let lastTrend = null;
 let lastCategories = null;
+
+// Background-classification polling state. Classification runs server-side and
+// can take minutes per period on a slow local model; we re-fetch the summary
+// until everything is categorized, and stop only when the server reports the
+// classifier actually failed (Ollama unreachable).
+let classifyPollTimer = null;
+const CLASSIFY_POLL_MS = 6000;
 
 function applyTranslations() {
   document.documentElement.lang = lang;
@@ -188,8 +197,15 @@ function escapeHtml(str) {
 
 // --- Rendering ------------------------------------------------------------
 
-async function loadSummary() {
-  const summary = await api(`/api/summary?period=${currentPeriod()}`);
+async function loadSummary(isPoll = false) {
+  // A fresh (non-poll) load starts a new classification watch.
+  if (classifyPollTimer) {
+    clearTimeout(classifyPollTimer);
+    classifyPollTimer = null;
+  }
+
+  const period = currentPeriod();
+  const summary = await api(`/api/summary?period=${period}`);
   el("card-income").textContent = euro.format(summary.income);
   el("card-expense").textContent = euro.format(summary.expense);
   el("card-balance").textContent = euro.format(summary.balance);
@@ -205,11 +221,7 @@ async function loadSummary() {
     renderCategoryChart(lastCategories);
   }
 
-  // ensure_classified runs synchronously server-side, so anything still
-  // unclassified means the model was unreachable rather than "in progress".
-  el("classify-status").textContent = summary.unclassified_count
-    ? t("unclassifiedNote", { count: summary.unclassified_count })
-    : "";
+  updateClassifyStatus(summary.unclassified_count, summary.classifier, period, isPoll);
 
   const breakdown = el("category-breakdown");
   breakdown.innerHTML = "";
@@ -231,6 +243,32 @@ async function loadSummary() {
     `;
     breakdown.appendChild(li);
   }
+}
+
+// Drive the "classifying…" indicator and the background-classification poll.
+// While work remains we re-fetch the summary so categories fill in live. We
+// keep polling through slow batches (which can take minutes) and stop only when
+// the server reports the classifier failed with none running — i.e. Ollama is
+// unreachable. The failed flag is ignored on a fresh load so a just-scheduled
+// pass always gets a chance.
+function updateClassifyStatus(remaining, classifier, period, isPoll) {
+  const status = el("classify-status");
+  if (!remaining) {
+    status.textContent = "";
+    // Categories just settled — refresh advice so it reflects real categories.
+    if (isPoll) loadAdvice();
+    return;
+  }
+
+  if (isPoll && classifier && classifier.failed && !classifier.running) {
+    status.textContent = t("unclassifiedNote", { count: remaining });
+    return; // stop polling; Ollama appears unreachable
+  }
+
+  status.textContent = t("classifying", { count: remaining });
+  classifyPollTimer = setTimeout(() => {
+    if (currentPeriod() === period) loadSummary(true);
+  }, CLASSIFY_POLL_MS);
 }
 
 async function loadBudgets() {
