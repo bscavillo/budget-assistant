@@ -82,6 +82,22 @@ def remove_budget(category: str):
     return {"deleted": category}
 
 
+@app.get("/api/budgets/suggestions")
+def get_budget_suggestions(*, background: BackgroundTasks):
+    """Suggested monthly budgets derived from the user's whole spending history.
+
+    Like classification, the model call runs in the background and the result is
+    cached; this returns the current cache immediately and schedules a refresh
+    only when the spending picture has changed (``stale``), so the request path
+    stays fast and the model is not re-queried for an unchanged history. The UI
+    polls while a pass runs and applies a suggestion only on an explicit click.
+    """
+    snapshot = ollama_service.budget_suggestions_snapshot()
+    if snapshot["stale"]:
+        background.add_task(ollama_service.ensure_budget_suggestions)
+    return snapshot
+
+
 # --- Summary & AI ---------------------------------------------------------
 
 @app.get("/api/summary")

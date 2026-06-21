@@ -305,3 +305,155 @@ def ensure_classified(period=None):
     finally:
         _set_state(running=False)
         _classify_lock.release()
+
+
+# --- Budget suggestions ----------------------------------------------------
+
+# Suggested category budgets come from a single local-model call that, like
+# classification, never runs on the request path. The result is cached and keyed
+# on a signature of the spending picture, so an unchanged history makes no model
+# call and the model is never asked the same question twice.
+_suggest_lock = threading.Lock()
+_suggest_state_lock = threading.Lock()
+_suggestions = None        # last good list of {category, monthly_limit}
+_suggest_signature = None  # signature of the stats those suggestions came from
+_suggest_running = False
+_suggest_failed = False
+
+
+def _stats_signature(stats):
+    """A stable string identifying a spending picture, to cache suggestions by."""
+    return json.dumps(
+        sorted((s["category"], s["avg_monthly"], s["months"]) for s in stats),
+        ensure_ascii=False,
+    )
+
+
+def _set_suggest_state(running=None, failed=None):
+    global _suggest_running, _suggest_failed
+    with _suggest_state_lock:
+        if running is not None:
+            _suggest_running = running
+        if failed is not None:
+            _suggest_failed = failed
+
+
+def budget_suggestions_snapshot():
+    """Return the cached suggestions plus whether a fresh pass is needed.
+
+    ``stale`` is True when there is spending to budget for but the cached
+    suggestions no longer match the current numbers (or none exist yet) — the
+    signal for the caller to schedule a background pass and for the UI to keep
+    polling. Mirrors the classifier's pollable status so the frontend can drive
+    both the same way.
+    """
+    stats = database.category_spending_stats()
+    signature = _stats_signature(stats)
+    with _suggest_state_lock:
+        fresh = signature == _suggest_signature and _suggestions is not None
+        return {
+            "suggestions": list(_suggestions or []),
+            "running": _suggest_running,
+            "failed": _suggest_failed,
+            "stale": bool(stats) and not fresh,
+        }
+
+
+def _suggest_from_model(stats):
+    """Ask the model for one monthly budget per category; None if unusable.
+
+    The model is given each category's average monthly spend and turns it into a
+    clean, livable budget (average plus a little headroom, rounded to a human
+    number), which is exactly the judgement a flat formula does poorly.
+    """
+    listing = [
+        {
+            "category": s["category"],
+            "avg_monthly": s["avg_monthly"],
+            "months_observed": s["months"],
+        }
+        for s in stats
+    ]
+    prompt = (
+        "You are a personal budgeting assistant for a German user. Below is the "
+        "user's own spending history, one row per category, with the average "
+        "amount spent per month (in euros) and how many distinct months that "
+        "average is based on.\n\n"
+        "Suggest a sensible monthly budget for each category:\n"
+        "- Start from the average monthly spend.\n"
+        "- Add a small amount of headroom (about 5-15%) so a normal month does "
+        "not immediately blow the budget.\n"
+        "- Round to a clean, human number (nearest 5 or 10 euros; larger "
+        "budgets can round to the nearest 25 or 50).\n"
+        "- Never suggest a budget below the average monthly spend.\n"
+        "- Give a budget for every category in the input and invent no new ones.\n\n"
+        "Spending history (JSON):\n"
+        f"{json.dumps(listing, ensure_ascii=False)}\n\n"
+        'Respond with JSON of the form {"suggestions": [{"category": '
+        '"Groceries", "monthly_limit": 350}, ...]} covering every category.'
+    )
+    result = _chat_json(
+        [
+            {"role": "system", "content": "You suggest realistic monthly budgets "
+             "from spending history. Reply with JSON only."},
+            {"role": "user", "content": prompt},
+        ]
+    )
+    suggestions = result.get("suggestions") if isinstance(result, dict) else None
+    if not suggestions:
+        return None
+
+    known = {s["category"] for s in stats}
+    cleaned = []
+    seen = set()
+    for item in suggestions:
+        try:
+            category = item["category"]
+            limit = float(item["monthly_limit"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        # Keep only known categories, sane amounts, and the first take on each.
+        if category in known and category not in seen and limit >= 0:
+            seen.add(category)
+            cleaned.append({"category": category, "monthly_limit": round(limit, 2)})
+    return cleaned or None
+
+
+def ensure_budget_suggestions():
+    """Recompute budget suggestions in the background when they are stale.
+
+    Fired as a background task whenever the suggestions are viewed and the
+    spending picture has changed (e.g. after an import classifies new rows).
+    Caches the result keyed on the spending signature, so an unchanged picture
+    makes no model call. Returns a small status dict mirroring
+    ``ensure_classified``; never raises on a missing Ollama server.
+    """
+    global _suggestions, _suggest_signature
+    # If a pass is already running, let it finish rather than starting another.
+    if not _suggest_lock.acquire(blocking=False):
+        return {"running": True}
+    try:
+        stats = database.category_spending_stats()
+        if not stats:
+            return {"suggested": 0}
+        signature = _stats_signature(stats)
+        with _suggest_state_lock:
+            if signature == _suggest_signature and _suggestions is not None:
+                return {"suggested": len(_suggestions)}
+
+        _set_suggest_state(running=True)
+        cleaned = _suggest_from_model(stats)
+        if cleaned is None:
+            # Nothing usable came back: flag it so the UI can warn, and leave the
+            # signature unset so the next view retries.
+            _set_suggest_state(failed=True)
+            return {"suggested": 0, "unavailable": True}
+
+        with _suggest_state_lock:
+            _suggestions = cleaned
+            _suggest_signature = signature
+            _suggest_failed = False
+        return {"suggested": len(cleaned)}
+    finally:
+        _set_suggest_state(running=False)
+        _suggest_lock.release()

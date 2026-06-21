@@ -255,6 +255,43 @@ def monthly_totals(months=6, anchor=None):
     return list(reversed(sequence))
 
 
+def category_spending_stats():
+    """Per-category spending stats over the user's whole history.
+
+    For every real (AI-assigned) ``std_category`` it returns the total spent,
+    how many distinct months that spending spans, and the resulting average
+    monthly spend. Unclassified rows are excluded — they have no category to
+    budget for yet. This is the raw "prior behavior" the budget-suggestion model
+    reasons over, so it is deliberately period-agnostic (all datapoints).
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT std_category AS category,
+                   COALESCE(SUM(amount), 0) AS total,
+                   COUNT(DISTINCT substr(date, 1, 7)) AS months,
+                   COUNT(*) AS tx_count
+            FROM transactions
+            WHERE type = 'expense' AND std_category IS NOT NULL
+            GROUP BY std_category
+            """
+        ).fetchall()
+
+    stats = []
+    for row in rows:
+        months = row["months"] or 1
+        stats.append(
+            {
+                "category": row["category"],
+                "total": round(row["total"], 2),
+                "months": row["months"],
+                "tx_count": row["tx_count"],
+                "avg_monthly": round(row["total"] / months, 2),
+            }
+        )
+    return stats
+
+
 UNCLASSIFIED = "Unclassified"
 
 
