@@ -344,6 +344,13 @@ const PALETTE = [
 
 let trendChart = null;
 let categoryChart = null;
+// Signature of the data currently drawn in the category chart. The background
+// classification poll re-fetches the summary every few seconds, but the
+// category totals usually haven't changed between ticks. Without this guard
+// each poll would destroy and rebuild the chart, replaying the bar animation
+// (and closing any open detail panel) for no reason — the "random reload" the
+// chart appeared to do. We only redraw when the data or language differs.
+let categorySig = null;
 
 const eurAxis = (value) => `${value} €`;
 const gridColor = "rgba(148, 163, 184, 0.15)";
@@ -387,6 +394,15 @@ function renderTrendChart(trend) {
 }
 
 function renderCategoryChart(categories) {
+  const sig = JSON.stringify([
+    lang,
+    categories.map((c) => [c.category, c.amount]),
+  ]);
+  // Nothing changed since the last draw (a poll tick) — leave the existing
+  // chart and any open detail panel exactly as they are.
+  if (categoryChart && sig === categorySig) return;
+  categorySig = sig;
+
   const ctx = el("category-chart");
   if (categoryChart) categoryChart.destroy();
   hideCategoryDetail();
