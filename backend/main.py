@@ -196,6 +196,13 @@ async def import_postbank(background: BackgroundTasks, file: UploadFile = File(.
     for month in months:
         background.add_task(ollama_service.ensure_classified, month)
 
+    # New spending shifts the picture the budget suggestions are built from, so
+    # refresh them too. Scheduled after the classification tasks above (FastAPI
+    # runs background tasks in order), it therefore recomputes on fully
+    # classified data; it self-skips via its cache if nothing actually changed.
+    if months:
+        background.add_task(ollama_service.ensure_budget_suggestions)
+
     return {"parsed": len(parsed), "imported": imported, "skipped": skipped}
 
 
