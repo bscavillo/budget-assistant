@@ -80,6 +80,16 @@ _PROCESSOR_HEADS = (
     "concardis", "sg-vr payment", "vr payment", "payone", "unzer",
     "postbank", "sparkasse", "deutsche bank", "ing-diba", "ing",
     "lastschrift aus kartenzahlung", "kartenzahlung", "visa", "mastercard",
+    "nexi germany gmbh", "nexi", "payu",
+)
+
+# Matches a leading processor token plus its glue punctuation ("SumUp .",
+# "SumUp.", "Nexi Germany GmbH - ") so it can be stripped even without a clean
+# " - " separator. Longest names first so the alternation prefers full matches.
+_PROCESSOR_PREFIX_RE = re.compile(
+    r"^(?:%s)\b[\s.\-]*" % "|".join(
+        re.escape(p) for p in sorted(_PROCESSOR_HEADS, key=len, reverse=True)),
+    re.IGNORECASE,
 )
 
 # Bank booking types (Umsatzart) that, on their own, pin the category with
@@ -137,6 +147,18 @@ def _clean_transaction(tx):
         segments.pop(0)
     text = " - ".join(segments)
 
+    # Some processors prefix the payee without a " - " separator, e.g.
+    # "SumUp .Saray Doner" or "SumUp.Mata"; strip a leading processor token and
+    # any glue punctuation so the real merchant still leads.
+    text = re.sub(_PROCESSOR_PREFIX_RE, "", text).strip()
+
+    # PayPal hides the real shop after "Ihr Einkauf bei" and pads the rest with
+    # "PP.####.PP" boilerplate; pull the shop out (it is the only useful part).
+    text = re.sub(r"\bPP\.\d+\.PP\b", " ", text)
+    bei = re.search(r"Ihr Einkauf bei\s*(.*)$", text, flags=re.IGNORECASE)
+    if bei:
+        text = bei.group(1).strip(" .,") or "Online-Einkauf (PayPal)"
+
     # Pull city/country from a trailing "Merchant/Street/City/Country" block.
     city = country = ""
     if "/" in text:
@@ -181,134 +203,117 @@ def _dedup_key(clean):
     return " ".join(base.split())[:80]
 
 
-# Hints that map common German banking/merchant vocabulary to categories. The
-# model often defaults everything to "Other" without concrete examples, so we
-# spell out the kind of German terms it will actually see.
-_CATEGORY_HINTS = (
-    "- Groceries: supermarkets & food shops in ANY country — REWE, EDEKA, ALDI, "
-    "LIDL, PENNY, NETTO, Kaufland, Tegut, Norma, DM, Rossmann, Metzgerei "
-    "(butcher); abroad e.g. Albert ('Albert vám děkuje'), Billa, Studenac, "
-    "Ribola, Konzum, Mercadona, Pingo Doce, Continente, Carrefour, Spar.\n"
-    "- Rent: Miete, Mietzahlung, Kaltmiete, Warmmiete, and any payment "
-    "(including a SEPA-Dauerauftrag) to a Vermieter, Hausverwaltung, property "
-    "manager or real-estate company — names containing 'Immobilien', "
-    "'Hausverwaltung', 'HV GmbH' or 'Verwaltung' are Rent, not transfers.\n"
-    "- Utilities: Strom, Gas, Wasser, Stadtwerke, Telekom, Vodafone, O2, "
-    "1&1, GEZ/Rundfunkbeitrag, Internet, Handy/Mobilfunk.\n"
-    "- Transport: Deutsche Bahn (DB), BVG, MVG, VVS, Tankstelle, Aral, Shell, "
-    "Esso, Total, Uber, FREENOW, Flixbus, Parkhaus, Deutschlandticket.\n"
-    "- Dining: eating & drinking out in ANY language — Restaurant, Café, Bar, "
-    "Imbiss, Bistro, Pub, Coffee, Burger, plus any bakery or pastry shop: "
-    "Bäckerei, Feinbäckerei, Konditorei, Backwaren, Heberer, McDonald's, Burger "
-    "King, Lieferando, Wolt, Uber Eats, Starbucks; abroad e.g. 'The Good "
-    "Bourger', 'HiBreeze Coffee', 'Aduela', 'Meia Nau', 'Pregar Baixa'.\n"
-    "- Shopping: Amazon, Zalando, MediaMarkt, Saturn, IKEA, H&M, Zara, "
-    "Otto, clothing/electronics/home stores.\n"
-    "- Health: Apotheke, Arzt, Praxis, Zahnarzt, Krankenkasse (AOK, TK, "
-    "Barmer), Fitnessstudio, McFit.\n"
-    "- Insurance: Versicherung, Allianz, HUK, AXA, Haftpflicht, Hausrat, "
-    "Kfz-Versicherung, Lebensversicherung.\n"
-    "- Entertainment: museums in ANY language (Museum/Muzeum/Museu/Museo, e.g. "
-    "'Narodni Muzeum'), castles & landmarks (Hrad, Castelo, Castillo), Kino, "
-    "Konzert, Steam, PlayStation, Eventim, games.\n"
-    "- Subscriptions: Netflix, Spotify, Disney+, Amazon Prime, YouTube "
-    "Premium, Audible, recurring monthly memberships.\n"
+# One tight line per category: what belongs there and the German/English/travel
+# vocabulary that signals it. Kept short and scannable so a local model can hold
+# the whole list while judging a single transaction.
+_CATEGORY_GUIDE = (
+    "- Groceries: supermarkets, food shops, butchers, drugstores. REWE, EDEKA, "
+    "ALDI, LIDL, PENNY, NETTO, Kaufland, Tegut, Norma, DM, Rossmann, Müller, "
+    "Metzgerei, 'nah & gut'; abroad Albert, Billa, Konzum, Studenac, Mercadona, "
+    "Continente, Carrefour, Spar.\n"
+    "- Rent: Miete, Kaltmiete, Warmmiete, or any payee with 'Immobilien', "
+    "'Hausverwaltung', 'Verwaltung', 'HV GmbH' — a landlord, not a transfer.\n"
+    "- Utilities: Strom, Gas, Wasser, Stadtwerke, Telekom, Vodafone, O2, 1&1, "
+    "GEZ/Rundfunkbeitrag, Internet, Mobilfunk.\n"
+    "- Transport: Deutsche Bahn/DB, BVG, MVG, VVS, Tankstelle, Aral, Shell, "
+    "Esso, Total, Uber, FREENOW, Flixbus, Parkhaus, Deutschlandticket, LogPay.\n"
+    "- Dining: eating & drinking out, in any language — Restaurant, Café, Bar, "
+    "Imbiss, Bistro, Pub, Coffee, Roaster, Burger, Pizza; bakeries too "
+    "(Bäckerei, Konditorei, Backwaren). McDonald's, Burger King, Starbucks, "
+    "Lieferando, Wolt. A 'GmbH'/'OHG' whose name sounds like a café/bar/eatery "
+    "and is paid at a point of sale is Dining (e.g. 'Fritz Mitte', 'Kuss', "
+    "'Bunca Human Roaster', 'Barbarino'). Bakeries are often abbreviated — "
+    "'Heberer' / 'WF Heberer' is Wiener Feinbäckerei Heberer (Dining).\n"
+    "- Shopping: retail goods — clothing, electronics, home, gifts, books. "
+    "Amazon, Zalando, MediaMarkt, Saturn, IKEA, H&M, Zara, Otto, NANU-NANA, "
+    "GALERIA (Kaufhof department store), DEUTSCHE POST.\n"
+    "- Health: Apotheke, Arzt, Praxis, Zahnarzt, Krankenkasse (AOK, TK, Barmer), "
+    "Fitnessstudio, McFit.\n"
+    "- Insurance: Versicherung, Allianz, HUK, AXA, Haftpflicht, Hausrat, Kfz-.\n"
+    "- Entertainment: museums (Museum/Muzeum/Museu/Museo), landmarks & churches "
+    "(Münster, Dom, Hrad, Castelo), Kino, Konzert, Theater, Steam, PlayStation, "
+    "Eventim, games, fairground/Schausteller.\n"
+    "- Subscriptions: Netflix, Spotify, Disney+, Amazon Prime, YouTube Premium, "
+    "Audible — recurring digital memberships.\n"
     "- Education: Uni, Universität, Hochschule, Studienbeitrag, Semesterbeitrag, "
-    "books, courses, Udemy.\n"
-    "- Cash: Bargeld, Geldautomat, ATM, Auszahlung, Barabhebung.\n"
+    "Udemy, courses.\n"
+    "- Cash: cash withdrawals — Geldautomat, ATM, Bargeld, Auszahlung.\n"
     "- Fees: Gebühr, Kontoführung, Entgelt, Zinsen, Bankgebühr.\n"
-    "- Transfers: a payment to a named PRIVATE PERSON (peer-to-peer). Recognise "
-    "real human names in any format or order, including the 'Lastname, "
-    "Firstname' form: 'Max Mustermann', 'John Smith', 'Smith, John'. A "
-    "standalone human name with no business "
-    "words is almost always a Transfer — strongly prefer Transfers over Other "
-    "for these. It is NOT a Transfer if the name carries a company form (GmbH, "
-    "AG, UG, mbH, KG, e.V., S.R.O., N.V., Lda, d.o.o., S.L.) or a business word "
-    "(Immobilien, Hausverwaltung, Versicherung, Bank, Shop, Café, Restaurant).\n"
-    "- Other: only when nothing above plausibly fits."
+    "- Transfers: a payment to a named PRIVATE PERSON, e.g. 'Max Mustermann' or "
+    "'Mustermann, Max'. A standalone human name with no company form (GmbH, AG, "
+    "UG, KG, OHG, e.V., N.V., S.R.O.) and no business word is a Transfer — "
+    "strongly prefer Transfers over Other for such names.\n"
+    "- Other: TRUE LAST RESORT only. A card payment at a named shop is essentially "
+    "never Other — pick the most likely real category instead."
+)
+
+_SYSTEM_PROMPT = (
+    "You categorize a single German bank transaction. The user travels, so "
+    "merchant names appear in German, English, Portuguese, Czech, Croatian, "
+    "Spanish, Italian and more — use your world knowledge of real merchants and "
+    "the words in the name to decide. Reply with JSON only."
 )
 
 
-def _classify_batch(batch):
-    """Classify one batch of transactions.
+def _classify_one(clean):
+    """Classify one cleaned transaction; return ``(category, merchant)`` or None.
 
-    Returns a list of ``(transaction, std_category, merchant)`` tuples, or
-    ``None`` if the model was unavailable / gave no usable answer. The model
-    does the "deep analysis": it strips the SEPA/IBAN/Mandatsreferenz noise to
-    recover the real merchant, then picks the category from it.
+    ``clean`` is the struct from ``_clean_transaction``. A deterministic ``hint``
+    (ATM cash, account fees) short-circuits the model entirely. Otherwise the
+    model gets the de-noised payee, its city/country and the bank booking type,
+    and returns a merchant + one on-list category. Returns ``None`` only when the
+    model is unavailable or gives nothing usable, so the row stays unclassified
+    and is retried later.
     """
-    listing = [
-        {"i": i, "text": (t["description"] or t["category"])[:160]}
-        for i, t in enumerate(batch)
-    ]
+    if clean["hint"]:
+        return clean["hint"], (clean["text"][:80] or None)
+
+    context = [f"Payee text: {clean['text']}"]
+    if clean["city"]:
+        context.append(f"City: {clean['city']}")
+    if clean["country"]:
+        context.append(f"Country: {clean['country']}")
+    if clean["type"]:
+        context.append(f"Bank booking type: {clean['type']}")
+
     prompt = (
-        "These are German bank transactions. The text is raw and noisy: it "
-        "mixes SEPA/IBAN/BIC codes, Mandatsreferenz numbers and booking "
-        "boilerplate with the actual merchant or payee.\n\n"
-        "The user travels, so merchant names appear in many languages — German, "
-        "English, Portuguese, Czech, Croatian, Spanish, Italian and more. Use "
-        "your world knowledge of real merchants and decode meaningful words in "
-        "ANY language before ever falling back to 'Other'. You already know what "
-        "places like 'Tegut', 'Narodni Muzeum' (a museum) or 'Albert vám děkuje' "
-        "(a Czech supermarket) are — classify them like a well-travelled local "
-        "would, not as 'Other'.\n\n"
-        "For each transaction:\n"
-        "1. Extract the real merchant/payee as a short, clean name (e.g. "
-        "'REWE', 'Deutsche Bahn', 'Netflix'). The text often LEADS with a bank "
-        "or payment processor that is NOT the merchant — skip it and take the "
-        "real name that follows: Postbank AG, Sparkasse, Deutsche Bank, ING, "
-        "SumUp, Adyen N.V., Stripe, PayPal, Klarna, Mollie, iZettle, Concardis. "
-        "So 'Postbank AG - Mata - Cafe.Bar' is the café 'Mata' (Dining), and "
-        "'SumUp - HiBreeze' is 'HiBreeze' (Dining). Ignore IBANs, BIC, reference "
-        "numbers and booking terms like 'SEPA Lastschrift' or 'Überweisung'.\n"
-        "2. Assign exactly one category from this list:\n"
-        f"{', '.join(STANDARD_CATEGORIES)}.\n\n"
-        "Read the merchant name itself for meaning — the words in it are the "
-        "strongest clue and usually settle the category on their own. For "
-        "example a name with 'Bäckerei', 'Feinbäckerei' or 'Konditorei' is a "
-        "bakery, so Dining (e.g. 'Wiener Feinbäckerei Heberer', 'Bäckerei "
-        "Konditorei Voigt'); a name with 'Immobilien' or 'Hausverwaltung' is a "
-        "landlord, so Rent; '... Apotheke' is Health; '... Restaurant' or "
-        "'... Café' is Dining; '... Versicherung' is Insurance. A name ending "
-        "in GmbH/AG is a company, never a personal Transfer. Always decode such "
-        "German/English words in the name before considering 'Other'.\n\n"
-        "Use these hints to recognise common German merchants and terms:\n"
-        f"{_CATEGORY_HINTS}\n\n"
-        "Transactions (JSON):\n"
-        f"{json.dumps(listing, ensure_ascii=False)}\n\n"
-        'Respond with JSON of the form {"assignments": [{"i": 0, '
-        '"merchant": "REWE", "category": "Groceries"}, ...]} covering every '
-        "transaction index. Pick the single best category and only use 'Other' "
-        "as a last resort when no other category is plausible."
+        "Below is ONE German bank transaction, already stripped of IBANs, "
+        "reference numbers and booking boilerplate. Identify the real "
+        "merchant/payee and assign exactly one category.\n\n"
+        + "\n".join(context) + "\n\n"
+        "Categories (choose exactly one):\n"
+        f"{_CATEGORY_GUIDE}\n\n"
+        "Booking-type cues: 'Kartenzahlung' is a card purchase at a physical "
+        "shop, restaurant or service — it is a real merchant, so 'Other' is "
+        "almost never correct. A 'Dauerauftrag' (standing order) is usually Rent "
+        "or a recurring bill. Use the city/country to help place a foreign name "
+        "(e.g. a shop in CZ/HR/PT/ES is likely Groceries or Dining).\n\n"
+        "Important: if the payee is a PERSON'S NAME (one or two human first+last "
+        "names, e.g. 'Max Mustermann' or 'Mustermann, Erika'), it is ALWAYS a "
+        "Transfer — even when the trailing memo names a brand, product, app, "
+        "game, ticket or shop (e.g. 'Nintendo', 'Apple Notes', 'Etsy', "
+        "'Monoprix'). That memo is only what the money was for; it never "
+        "overrides the fact that a person was paid. Classify on who was paid.\n\n"
+        "Think briefly, then answer. Decode the words in the name first; only "
+        "use 'Other' if no category is plausible at all.\n\n"
+        'Respond with JSON: {"merchant": "<clean short name>", "reason": '
+        '"<one short phrase>", "category": "<one category from the list>"}.'
     )
     result = _chat_json(
         [
-            {"role": "system", "content": "You clean up and categorize German "
-             "bank transactions. Reply with JSON only."},
+            {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
     )
-    assignments = result.get("assignments") if isinstance(result, dict) else None
-    if not assignments:
+    if not isinstance(result, dict) or result.get("_error"):
         return None
-
-    valid = set(STANDARD_CATEGORIES)
-    triples = []
-    for a in assignments:
-        try:
-            idx = int(a["i"])
-            category = a["category"]
-        except (KeyError, TypeError, ValueError):
-            continue
-        if not 0 <= idx < len(batch):
-            continue
-        merchant = (a.get("merchant") or "").strip()[:80] or None
-        triples.append((
-            batch[idx],
-            category if category in valid else _FALLBACK_CATEGORY,
-            merchant,
-        ))
-    return triples
+    category = result.get("category")
+    if not category:
+        return None
+    if category not in set(STANDARD_CATEGORIES):
+        category = _FALLBACK_CATEGORY
+    merchant = (result.get("merchant") or "").strip()[:80] or clean["text"][:80] or None
+    return category, merchant
 
 
 # Only one classification pass runs at a time. The endpoint fires this as a
@@ -362,49 +367,49 @@ def ensure_classified(period=None):
 
         _set_state(running=True)
 
-        # Collapse repeat payees down to one representative each (see
-        # ``_dedup_key``); we classify representatives and fan the answer back
-        # out to every row that shares the key. Rows with a too-generic key are
-        # kept on their own so unrelated payments never share a category.
+        # Clean each row's noisy text once, then collapse repeat payees down to
+        # one representative each (see ``_dedup_key``, now keyed on the cleaned
+        # text); we classify one representative and fan the answer out to every
+        # row that shares the key. Rows whose cleaned text leaves no stable key
+        # are kept on their own so unrelated payments never share a category.
         groups = {}
         for tx in pending:
-            key = _dedup_key(tx) or f"\0{tx['id']}"
-            groups.setdefault(key, []).append(tx)
-        reps = [members[0] for members in groups.values()]
-        rep_members = {members[0]["id"]: members for members in groups.values()}
-
-        batches = [reps[start:start + _BATCH_SIZE]
-                   for start in range(0, len(reps), _BATCH_SIZE)]
+            clean = _clean_transaction(tx)
+            key = _dedup_key(clean) or f"\0{tx['id']}"
+            groups.setdefault(key, (clean, []))[1].append(tx)
+        reps = [(clean, members) for clean, members in groups.values()]
 
         classified = 0
-        failed_batches = 0
-        # Run the independent batches concurrently; each Ollama call is blocking
-        # I/O, so a small thread pool overlaps the per-request round-trips. Each
-        # batch is persisted as soon as it returns so a polling UI sees steady
-        # progress instead of nothing until the whole period is done.
+        attempted = 0
+        failed = 0
+        # Classify one representative per distinct payee. Each Ollama call is
+        # blocking I/O, so a small thread pool overlaps the round-trips; the
+        # local model still serialises actual inference. Each result is
+        # persisted as soon as it returns so a polling UI sees steady progress.
         with ThreadPoolExecutor(
-                max_workers=min(_MAX_CONCURRENCY, len(batches))) as pool:
-            futures = [pool.submit(_classify_batch, batch) for batch in batches]
+                max_workers=min(_MAX_CONCURRENCY, len(reps))) as pool:
+            futures = {pool.submit(_classify_one, clean): members
+                       for clean, members in reps}
             for future in as_completed(futures):
-                triples = future.result()
-                if triples is None:
-                    failed_batches += 1
+                attempted += 1
+                result = future.result()
+                if result is None:
+                    failed += 1
                     continue
+                category, merchant = result
                 updates = [(member["id"], category, merchant)
-                           for rep, category, merchant in triples
-                           for member in rep_members[rep["id"]]]
-                if updates:
-                    database.set_classifications(updates)
-                    classified += len(updates)
+                           for member in futures[future]]
+                database.set_classifications(updates)
+                classified += len(updates)
 
-        # A pass that touched batches but saved nothing means Ollama is down /
-        # erroring; a pass that saved at least one clears the failed flag.
-        _set_state(failed=(classified == 0 and failed_batches > 0))
+        # A pass that tried every representative but saved nothing means Ollama
+        # is down / erroring; saving at least one clears the failed flag.
+        _set_state(failed=(classified == 0 and failed > 0))
         return {
             "classified": classified,
             # True only when nothing could be classified (Ollama down); a
             # partial failure just retries on the next view.
-            "unavailable": failed_batches == len(batches),
+            "unavailable": failed == attempted and attempted > 0,
         }
     finally:
         _set_state(running=False)

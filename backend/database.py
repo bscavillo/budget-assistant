@@ -147,6 +147,21 @@ def set_classifications(results):
         )
 
 
+def clear_classifications():
+    """Reset every expense to unclassified so the AI re-categorises from scratch.
+
+    Used by the "re-categorise all" path after a classifier change: it nulls
+    ``std_category``/``merchant`` so the normal lazy pass treats every row as
+    pending again. Returns the number of rows cleared.
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE transactions SET std_category = NULL, merchant = NULL "
+            "WHERE type = 'expense'"
+        )
+        return cursor.rowcount
+
+
 # --- Budgets --------------------------------------------------------------
 
 def list_budgets():
