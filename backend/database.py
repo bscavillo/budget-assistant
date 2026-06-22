@@ -369,6 +369,16 @@ def period_summary(period=None):
             params,
         ).fetchall()
 
+        incomes = conn.execute(
+            f"""
+            SELECT id, date, description, merchant, amount
+            FROM transactions
+            WHERE type = 'income' AND {condition}
+            ORDER BY amount DESC
+            """,
+            params,
+        ).fetchall()
+
         budgets = {row["category"]: row["monthly_limit"] for row in
                    conn.execute("SELECT * FROM budgets").fetchall()}
 
@@ -413,11 +423,22 @@ def period_summary(period=None):
         )
     categories.sort(key=lambda c: c["spent"], reverse=True)
 
+    income_transactions = [
+        {
+            "id": row["id"],
+            "date": row["date"],
+            "description": row["merchant"] or row["description"],
+            "amount": round(row["amount"], 2),
+        }
+        for row in incomes
+    ]
+
     return {
         "period": period or date.today().strftime("%Y-%m"),
         "income": round(income, 2),
         "expense": round(expense, 2),
         "balance": round(income - expense, 2),
         "categories": categories,
+        "income_transactions": income_transactions,
         "unclassified_count": unclassified_count,
     }

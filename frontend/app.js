@@ -41,6 +41,7 @@ const I18N = {
     close: "Schließen",
     fullYear: "Ganzes Jahr",
     yearToDate: "Bisher dieses Jahr",
+    noIncome: "Noch keine Einnahmen in diesem Zeitraum.",
   },
   en: {
     income: "Income",
@@ -73,6 +74,7 @@ const I18N = {
     close: "Close",
     fullYear: "Full year",
     yearToDate: "Year to date",
+    noIncome: "No income in this period yet.",
   },
 };
 
@@ -251,7 +253,10 @@ async function loadSummary(isPoll = false) {
   }
   for (const cat of summary.categories) {
     const li = document.createElement("li");
-    li.className = "flex flex-col items-stretch border-b border-line py-2 text-[0.9rem]";
+    // Each row drills into its transactions on click, so it reads as a button.
+    li.className =
+      "flex cursor-pointer flex-col items-stretch border-b border-line py-2 text-[0.9rem] hover:bg-panel-soft";
+    li.addEventListener("click", () => showCategoryDetail(cat));
     const pct = cat.limit ? Math.min(100, (cat.spent / cat.limit) * 100) : 0;
     const over = cat.limit !== null && cat.spent > cat.limit;
     const limitText = cat.limit !== null
@@ -263,6 +268,29 @@ async function loadSummary(isPoll = false) {
       ${cat.limit !== null ? `<div class="mt-1.5 h-1.5 rounded-[3px] ${over ? "bg-expense" : "bg-accent"}" style="width:${pct}%"></div>` : ""}
     `;
     breakdown.appendChild(li);
+  }
+
+  renderIncomeBreakdown(summary.income_transactions || []);
+}
+
+// The smaller side column listing the period's individual income entries.
+function renderIncomeBreakdown(transactions) {
+  const list = el("income-breakdown");
+  list.innerHTML = "";
+  if (!transactions.length) {
+    list.innerHTML = `<li class="meta">${t("noIncome")}</li>`;
+    return;
+  }
+  for (const tx of transactions) {
+    const li = document.createElement("li");
+    li.className = "flex justify-between gap-3 border-b border-line py-2 text-[0.85rem]";
+    li.innerHTML = `
+      <span class="min-w-0 flex-1 truncate">
+        <span class="text-muted">${escapeHtml(tx.date)}</span>
+        ${escapeHtml(tx.description || "—")}
+      </span>
+      <span class="flex-none text-income">${euro.format(tx.amount)}</span>`;
+    list.appendChild(li);
   }
 }
 
@@ -513,6 +541,9 @@ function showCategoryDetail(category) {
     list.appendChild(li);
   }
   panel.classList.remove("hidden");
+  // The panel lives up in the Analyse section, but the click may come from the
+  // breakdown list further down, so bring it into view.
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // --- Events ---------------------------------------------------------------
