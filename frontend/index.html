@@ -63,7 +63,7 @@
     </div>
   </header>
 
-  <main class="mx-auto max-w-[1100px] px-8 pb-12 pt-6 max-[760px]:px-4">
+  <main class="mx-auto w-[90%] max-w-[1500px] px-8 pb-12 pt-6 max-[760px]:w-auto max-[760px]:px-4">
     <section class="mb-6 grid grid-cols-3 gap-4 max-[760px]:grid-cols-1" id="summary-cards">
       <div class="flex flex-col gap-1 rounded-xl border border-line bg-panel px-5 py-4">
         <span class="text-sm text-muted" data-i18n="income">Einnahmen</span>
@@ -126,12 +126,12 @@
       </section>
 
       <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
-        <div class="grid grid-cols-[2fr,1fr] gap-6 max-[760px]:grid-cols-1">
-          <div>
+        <div class="grid grid-cols-3 gap-8 max-[760px]:grid-cols-1">
+          <div class="col-span-2 min-w-0">
             <h2 class="m-0 mb-3 text-[1.05rem]" id="spending-title" data-i18n="spendingTitle">Ausgaben</h2>
             <ul id="category-breakdown" class="m-0 list-none p-0"></ul>
           </div>
-          <div class="border-l border-line pl-6 max-[760px]:border-l-0 max-[760px]:border-t max-[760px]:pl-0 max-[760px]:pt-4">
+          <div class="min-w-0 border-l border-line pl-8 max-[760px]:border-l-0 max-[760px]:border-t max-[760px]:pl-0 max-[760px]:pt-4">
             <h2 class="m-0 mb-3 text-[1.05rem]" id="income-title" data-i18n="income">Einnahmen</h2>
             <ul id="income-breakdown" class="m-0 list-none p-0"></ul>
           </div>
@@ -141,6 +141,6 @@
   </main>
 
   <script src="/static/vendor/chart.umd.min.js"></script>
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

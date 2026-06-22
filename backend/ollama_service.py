@@ -71,30 +71,114 @@ STANDARD_CATEGORIES = [
 _FALLBACK_CATEGORY = "Other"
 
 
-# Transactions are classified in small batches so the model's JSON response
-# never gets truncated by the context/output window.
-_BATCH_SIZE = 20
+# Payment processors / banks that lead a description but are NOT the merchant.
+# A booking like "Adyen N.V. - Fritz Mitte GmbH/.../Jena/DE" is the café "Fritz
+# Mitte", not Adyen; we drop these heads so the real payee leads the text the
+# model reads. Matched case-insensitively as a prefix of a " - " segment.
+_PROCESSOR_HEADS = (
+    "adyen", "sumup", "paypal", "stripe", "klarna", "mollie", "izettle",
+    "concardis", "sg-vr payment", "vr payment", "payone", "unzer",
+    "postbank", "sparkasse", "deutsche bank", "ing-diba", "ing",
+    "lastschrift aus kartenzahlung", "kartenzahlung", "visa", "mastercard",
+)
+
+# Bank booking types (Umsatzart) that, on their own, pin the category with
+# certainty. Surfaced to the model as a strong hint rather than hard-coded, but
+# also used to recognise cash/fees deterministically in the cleanup struct.
+_CASH_TYPES = ("auszahlung", "bargeld", "geldautomat")
+_FEE_TYPES = ("entgelt", "gebuhr", "gebühr", "kontoabrechnung", "kontofuhrung")
+
+# An ATM withdrawal looks like "GA NR07095930 BLZ820700240125.04/12.53UHR JENA"
+# — a terminal/BLZ code and a time, with the city trailing. No merchant exists.
+_ATM_RE = re.compile(r"^GA\s*NR", re.IGNORECASE)
 
 
-def _dedup_key(tx):
-    """A coarse key that collapses repeat payees so each is classified once.
+def _clean_transaction(tx):
+    """Strip SEPA/booking noise so the model reads a clean payee, not garbage.
 
-    A transaction's raw text carries per-booking noise — amounts, IBANs,
-    Mandatsreferenz and terminal numbers — that differs between two payments to
-    the same merchant. Lowercasing and dropping digits/punctuation leaves the
-    stable merchant words ("rewe sagt danke berlin"), so a year full of REWE,
-    Netflix or rent bookings collapses to a handful of representatives. Each is
-    classified once and the answer fans out to every matching row, which both
-    cuts the number of model calls sharply and guarantees the same merchant
-    gets the same category everywhere.
+    Returns a dict ``{text, city, country, type, hint}`` where ``text`` is the
+    de-noised description (processor head dropped, timestamps / IBAN / BIC /
+    Mandatsreferenz / terminal numbers removed), ``city``/``country`` are pulled
+    from the trailing ``/City/Country`` block when present, ``type`` is the raw
+    Umsatzart, and ``hint`` is a deterministic category when the booking type
+    alone settles it (ATM cash, account fees) — empty otherwise.
 
-    A key with no letters left (e.g. an all-numeric description) is too generic
-    to safely merge unrelated rows, so the caller keeps those transactions
-    separate.
+    This is pure text normalisation: it never decides a *merchant's* category,
+    it just hands the model the cleanest possible input.
     """
-    text = (tx["description"] or tx["category"] or "").lower()
-    text = re.sub(r"[^a-zäöüß ]+", " ", text)
-    return " ".join(text.split())[:80]
+    raw = (tx["description"] or "").strip()
+    raw_type = (tx["category"] or "").strip()
+    type_l = raw_type.lower()
+
+    # Cash withdrawals carry no merchant; recognise the ATM pattern and the
+    # cash booking types so they never get guessed at.
+    if _ATM_RE.match(raw) or any(t in type_l for t in _CASH_TYPES):
+        city = raw.split()[-1] if raw.split() else ""
+        return {"text": "Geldautomat (ATM cash withdrawal)", "city": city,
+                "country": "", "type": raw_type, "hint": "Cash"}
+    if any(t in type_l for t in _FEE_TYPES):
+        return {"text": raw[:160] or raw_type, "city": "", "country": "",
+                "type": raw_type, "hint": "Fees"}
+
+    text = raw
+    # Drop everything from the first booking timestamp / trailer onward.
+    text = re.split(r"\s+\d{2}-\d{2}-\d{4}T", text)[0]
+    text = re.split(r"\s+(?:Folgenr\.|Verfalld\.|Original\b)", text)[0]
+    # Remove IBAN/BIC, BLZ codes, mandate refs and long digit runs.
+    text = re.sub(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b", " ", text)
+    text = re.sub(r"\bBLZ\d+\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(?:Mandatsref|Glaubiger|Gläubiger|End-?to-?End)\w*.*$",
+                  " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b\d{5,}\b", " ", text)
+
+    # Drop leading payment-processor segments so the real payee leads.
+    segments = [s.strip() for s in text.split(" - ") if s.strip()]
+    while len(segments) > 1 and _is_processor(segments[0]):
+        segments.pop(0)
+    text = " - ".join(segments)
+
+    # Pull city/country from a trailing "Merchant/Street/City/Country" block.
+    city = country = ""
+    if "/" in text:
+        parts = [p.strip(" .") for p in text.split("/") if p.strip(" .")]
+        if len(parts) >= 2:
+            last = parts[-1]
+            if 2 <= len(last) <= 3 and last.isalpha():
+                country = last.upper()
+                parts = parts[:-1]
+            if len(parts) >= 2:
+                city = parts[-1]
+
+    text = " ".join(text.replace("/", " ").split())[:160]
+    if not text:
+        text = raw[:160] or raw_type
+    return {"text": text, "city": city, "country": country,
+            "type": raw_type, "hint": ""}
+
+
+def _is_processor(segment):
+    """True if a " - " segment is just a payment processor / bank, not a payee."""
+    head = segment.lower().lstrip()
+    return any(head.startswith(p) for p in _PROCESSOR_HEADS)
+
+
+def _dedup_key(clean):
+    """Collapse repeat payees so each distinct merchant is classified once.
+
+    Built from the *cleaned* text (see ``_clean_transaction``) rather than the
+    raw description, so per-booking noise (amounts, IBANs, timestamps, terminal
+    numbers) is already gone and the leading boilerplate can no longer push the
+    real merchant out of the key. Lowercased, letters-only, plus the city so two
+    different shops that happen to share a name in different towns stay apart.
+    A year of REWE/Netflix/rent bookings collapses to one representative each,
+    whose single classification fans out to every matching row.
+
+    Returns ``""`` when nothing stable is left, signalling the caller to keep
+    that row on its own rather than merge it with unrelated payments.
+    """
+    base = f"{clean['text']} {clean['city']}".lower()
+    base = re.sub(r"[^a-zäöüß ]+", " ", base)
+    return " ".join(base.split())[:80]
 
 
 # Hints that map common German banking/merchant vocabulary to categories. The

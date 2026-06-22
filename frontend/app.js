@@ -263,8 +263,10 @@ async function loadSummary(isPoll = false) {
       ? ` / ${euro.format(cat.limit)}${over ? ` (${t("overBudget")})` : ""}`
       : "";
     li.innerHTML = `
-      <div class="flex justify-between"><span>${escapeHtml(cat.category)}</span>
-        <span>${euro.format(cat.spent)}${limitText}</span></div>
+      <div class="flex items-baseline justify-between gap-3">
+        <span class="min-w-0 truncate">${escapeHtml(cat.category)}</span>
+        <span class="flex-none tabular-nums">${euro.format(cat.spent)}${limitText}</span>
+      </div>
       ${cat.limit !== null ? `<div class="mt-1.5 h-1.5 rounded-[3px] ${over ? "bg-expense" : "bg-accent"}" style="width:${pct}%"></div>` : ""}
     `;
     breakdown.appendChild(li);
@@ -283,13 +285,14 @@ function renderIncomeBreakdown(transactions) {
   }
   for (const tx of transactions) {
     const li = document.createElement("li");
-    li.className = "flex justify-between gap-3 border-b border-line py-2 text-[0.85rem]";
+    li.className =
+      "flex items-baseline justify-between gap-3 border-b border-line py-2 text-[0.85rem]";
     li.innerHTML = `
-      <span class="min-w-0 flex-1 truncate">
-        <span class="text-muted">${escapeHtml(tx.date)}</span>
-        ${escapeHtml(tx.description || "—")}
+      <span class="flex min-w-0 flex-1 flex-col">
+        <span class="truncate" title="${escapeHtml(tx.description || "")}">${escapeHtml(tx.description || "—")}</span>
+        <span class="text-xs text-muted">${escapeHtml(tx.date)}</span>
       </span>
-      <span class="flex-none text-income">${euro.format(tx.amount)}</span>`;
+      <span class="flex-none tabular-nums text-income">${euro.format(tx.amount)}</span>`;
     list.appendChild(li);
   }
 }
