@@ -22,11 +22,6 @@ const I18N = {
     budgetsTitle: "Kategorie-Budgets",
     monthlyLimit: "Monatslimit €",
     set: "Setzen",
-    suggestionsTitle: "Vorgeschlagene Budgets",
-    apply: "Übernehmen",
-    noSuggestions: "Noch keine Vorschläge (genügend Verlauf nötig).",
-    suggesting: "Budgets werden aus deinem Verlauf vorgeschlagen …",
-    suggestUnavailable: "Vorschläge nicht verfügbar (läuft Ollama?).",
     spendingTitle: "Ausgaben",
     delete: "Löschen",
     noExpenses: "Noch keine Ausgaben in diesem Zeitraum.",
@@ -55,11 +50,6 @@ const I18N = {
     budgetsTitle: "Category budgets",
     monthlyLimit: "Monthly limit €",
     set: "Set",
-    suggestionsTitle: "Suggested budgets",
-    apply: "Apply",
-    noSuggestions: "No suggestions yet (need enough history).",
-    suggesting: "Suggesting budgets from your history …",
-    suggestUnavailable: "Suggestions unavailable (is Ollama running?).",
     spendingTitle: "Spending",
     delete: "Delete",
     noExpenses: "No expenses in this period yet.",
@@ -103,11 +93,6 @@ let lastCategories = null;
 // classifier actually failed (Ollama unreachable).
 let classifyPollTimer = null;
 const CLASSIFY_POLL_MS = 6000;
-
-// Budget suggestions are produced by the same kind of background model pass as
-// classification, so they get the same poll-until-ready treatment.
-let suggestPollTimer = null;
-const SUGGEST_POLL_MS = 6000;
 
 function applyTranslations() {
   document.documentElement.lang = lang;
@@ -338,60 +323,6 @@ async function loadBudgets() {
   }
 }
 
-// Suggested budgets mirror the budget list, but each row carries an "apply"
-// button instead of a delete one: the suggestion only becomes a real budget on
-// an explicit click, so the model never overwrites the user's own limits. The
-// list is generated server-side from the whole spending history and polled
-// while a pass runs, exactly like classification.
-async function loadSuggestions(isPoll = false) {
-  if (suggestPollTimer) {
-    clearTimeout(suggestPollTimer);
-    suggestPollTimer = null;
-  }
-
-  let data;
-  try {
-    data = await api("/api/budgets/suggestions");
-  } catch (_) {
-    return; // leave whatever is on screen; the next refresh retries
-  }
-
-  const list = el("suggestion-list");
-  list.innerHTML = "";
-  if (!data.suggestions.length && !data.running && !data.stale) {
-    list.innerHTML = `<li class="meta">${t("noSuggestions")}</li>`;
-  }
-  for (const s of data.suggestions) {
-    const li = document.createElement("li");
-    li.className = "flex justify-between gap-2 border-b border-line py-2 text-[0.9rem]";
-    li.innerHTML = `<span>${escapeHtml(s.category)}</span>
-      <span>${euro.format(s.monthly_limit)}
-      <button class="apply cursor-pointer border-0 bg-transparent px-1.5 text-accent hover:brightness-110" data-category="${escapeHtml(s.category)}" data-limit="${s.monthly_limit}">${t("apply")}</button></span>`;
-    list.appendChild(li);
-  }
-
-  updateSuggestStatus(data, isPoll);
-}
-
-// Drive the suggestions status line and poll. Same shape as the classifier:
-// keep polling while a pass runs or the suggestions are stale, and stop with a
-// warning only once a pass has actually failed with none running (Ollama down).
-// The failed flag is ignored on a fresh (non-poll) load so a just-scheduled
-// pass always gets a chance.
-function updateSuggestStatus(data, isPoll) {
-  const status = el("suggestion-status");
-  if (isPoll && data.failed && !data.running) {
-    status.textContent = t("suggestUnavailable");
-    return; // stop polling; Ollama appears unreachable
-  }
-  if (data.running || data.stale) {
-    status.textContent = t("suggesting");
-    suggestPollTimer = setTimeout(() => loadSuggestions(true), SUGGEST_POLL_MS);
-    return;
-  }
-  status.textContent = "";
-}
-
 // Populate the budget category dropdown from the canonical category list so
 // budgets always use the same vocabulary as the AI classification.
 async function loadCategories() {
@@ -415,7 +346,7 @@ async function loadTrend() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadSummary(), loadBudgets(), loadTrend(), loadSuggestions()]);
+  await Promise.all([loadSummary(), loadBudgets(), loadTrend()]);
 }
 
 // --- Charts ---------------------------------------------------------------
@@ -575,20 +506,6 @@ document.addEventListener("click", async (e) => {
     await api(`/api/budgets/${encodeURIComponent(budgetBtn.dataset.category)}`, { method: "DELETE" });
     await refreshAll();
     return;
-  }
-
-  // Adopt a suggested budget: write it as a real budget, then refresh so it
-  // moves into the budget list above.
-  const applyBtn = e.target.closest(".suggestion-list button.apply");
-  if (applyBtn) {
-    await api("/api/budgets", {
-      method: "POST",
-      body: JSON.stringify({
-        category: applyBtn.dataset.category,
-        monthly_limit: parseFloat(applyBtn.dataset.limit),
-      }),
-    });
-    await refreshAll();
   }
 });
 
