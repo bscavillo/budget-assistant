@@ -223,6 +223,21 @@ def latest_transaction_month():
         return row["month"] if row else None
 
 
+def months_with_data():
+    """Return the distinct ISO ``YYYY-MM`` months that have a transaction.
+
+    Sorted ascending. Lets the UI tell whether a year is fully covered (data
+    through December) or only partial, so it can offer "full year" versus
+    "year to date" accordingly.
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(date, 1, 7) AS month FROM transactions "
+            "ORDER BY month"
+        ).fetchall()
+        return [row["month"] for row in rows]
+
+
 def monthly_totals(months=6, anchor=None):
     """Return income/expense totals per month for ``months`` months.
 

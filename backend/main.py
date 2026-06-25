@@ -148,6 +148,13 @@ def latest_month():
     return {"month": database.latest_transaction_month()}
 
 
+@app.get("/api/months")
+def months():
+    """The distinct ``YYYY-MM`` months that have data, so the date picker can
+    decide between a "full year" and a "year to date" whole-period option."""
+    return {"months": database.months_with_data()}
+
+
 @app.post("/api/import/postbank")
 async def import_postbank(background: BackgroundTasks, file: UploadFile = File(...)):
     """Import transactions from a Postbank CSV export.

@@ -87,6 +87,11 @@ const yearSelect = el("year-select");
 let lastTrend = null;
 let lastCategories = null;
 
+// Latest month (1–12) that has data, per year ("YYYY" -> month number). Drives
+// the date picker's whole-period choice: a year whose data reaches December is
+// offered as a "full year", one that stops earlier as "year to date".
+let yearLatestMonth = new Map();
+
 // Background-classification polling state. Classification runs server-side and
 // can take minutes per period on a slow local model; we re-fetch the summary
 // until everything is categorized, and stop only when the server reports the
@@ -119,23 +124,53 @@ function setLang(next) {
 
 // --- Date picker ----------------------------------------------------------
 
+// The single whole-period choice offered for the selected year: a full
+// calendar year once its data reaches December, otherwise year-to-date through
+// the latest month present. Years with no data yet fall back to year-to-date.
+function wholePeriodOption() {
+  const year = yearSelect.value || String(new Date().getFullYear());
+  if (yearLatestMonth.get(year) === 12) return ["year", "fullYear"];
+  return ["ytd", "yearToDate"];
+}
+
 function populateMonthOptions() {
   const selected = monthSelect.value;
   monthSelect.innerHTML = "";
-  // Whole-period choices precede the individual months.
-  for (const [value, key] of [["ytd", "yearToDate"], ["year", "fullYear"]]) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = t(key);
-    monthSelect.appendChild(opt);
-  }
+  // The whole-period choice precedes the individual months and reflects the
+  // selected year's data coverage (full year vs. year to date).
+  const [wpValue, wpKey] = wholePeriodOption();
+  const wpOpt = document.createElement("option");
+  wpOpt.value = wpValue;
+  wpOpt.textContent = t(wpKey);
+  monthSelect.appendChild(wpOpt);
   MONTHS[lang].forEach((name, i) => {
     const opt = document.createElement("option");
     opt.value = String(i + 1).padStart(2, "0");
     opt.textContent = name;
     monthSelect.appendChild(opt);
   });
-  if (selected) monthSelect.value = selected;
+  // Restore the prior selection, mapping a previous whole-period choice onto
+  // whichever one ("year"/"ytd") this year now offers so the view is kept.
+  if (selected === "ytd" || selected === "year") {
+    monthSelect.value = wpValue;
+  } else if (selected) {
+    monthSelect.value = selected;
+  }
+}
+
+// Refresh the per-year data coverage that drives the whole-period choice.
+async function loadDateCoverage() {
+  try {
+    const { months } = await api("/api/months");
+    yearLatestMonth = new Map();
+    for (const m of months) {
+      const year = m.slice(0, 4);
+      const month = parseInt(m.slice(5, 7), 10);
+      if (month > (yearLatestMonth.get(year) || 0)) yearLatestMonth.set(year, month);
+    }
+  } catch (_) {
+    /* leave coverage empty; the picker falls back to year-to-date */
+  }
 }
 
 function populateYearOptions() {
@@ -528,6 +563,10 @@ el("import-form").addEventListener("submit", async (e) => {
       const { month } = await api("/api/latest-month");
       if (month) setMonthYear(month);
     } catch (_) { /* ignore */ }
+    // Imported rows may complete a year (or extend it), so refresh coverage
+    // and rebuild the whole-period choice for the now-selected year.
+    await loadDateCoverage();
+    populateMonthOptions();
     await refreshAll();
   } catch (err) {
     status.textContent = err.message;
@@ -544,7 +583,12 @@ function onMonthYearChange() {
 }
 
 monthSelect.addEventListener("change", onMonthYearChange);
-yearSelect.addEventListener("change", onMonthYearChange);
+yearSelect.addEventListener("change", () => {
+  // The whole-period choice depends on the year's coverage, so rebuild the
+  // month options before reloading the data for the new selection.
+  populateMonthOptions();
+  onMonthYearChange();
+});
 
 // --- Init -----------------------------------------------------------------
 
@@ -559,6 +603,10 @@ async function init() {
   } catch (_) {
     /* fall back to the current month */
   }
+  // Coverage decides full-year vs. year-to-date, so load it before rebuilding
+  // the month options for the now-selected year.
+  await loadDateCoverage();
+  populateMonthOptions();
   refreshAll();
 }
 
