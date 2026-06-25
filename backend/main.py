@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import database
 import ollama_service
 import postbank_import
+import wells_fargo_import
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -155,21 +156,14 @@ def months():
     return {"months": database.months_with_data()}
 
 
-@app.post("/api/import/postbank")
-async def import_postbank(background: BackgroundTasks, file: UploadFile = File(...)):
-    """Import transactions from a Postbank CSV export.
+def _ingest(parsed, background):
+    """Store parsed transactions and return an import summary.
 
-    Parses the file, skips rows already present (so overlapping exports don't
-    create duplicates), inserts the rest, and schedules background AI
-    classification for the months that gained transactions so categories are
-    usually ready by the time the user looks.
+    Skips rows already present (so overlapping exports don't create
+    duplicates), inserts the rest, and schedules background AI classification
+    for the months that gained expenses so categories are usually ready by the
+    time the user looks.
     """
-    raw = await file.read()
-    try:
-        parsed = postbank_import.parse(raw)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
     imported = 0
     skipped = 0
     months = set()
@@ -188,6 +182,28 @@ async def import_postbank(background: BackgroundTasks, file: UploadFile = File(.
         background.add_task(ollama_service.ensure_classified, month)
 
     return {"parsed": len(parsed), "imported": imported, "skipped": skipped}
+
+
+@app.post("/api/import/postbank")
+async def import_postbank(background: BackgroundTasks, file: UploadFile = File(...)):
+    """Import transactions from a Postbank CSV export."""
+    raw = await file.read()
+    try:
+        parsed = postbank_import.parse(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _ingest(parsed, background)
+
+
+@app.post("/api/import/wells-fargo")
+async def import_wells_fargo(background: BackgroundTasks, file: UploadFile = File(...)):
+    """Import transactions from a Wells Fargo CSV export."""
+    raw = await file.read()
+    try:
+        parsed = wells_fargo_import.parse(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _ingest(parsed, background)
 
 
 # --- Frontend -------------------------------------------------------------
