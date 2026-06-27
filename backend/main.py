@@ -35,6 +35,12 @@ class TransactionIn(BaseModel):
     description: str = Field(default="", max_length=200)
 
 
+class TransactionUpdate(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    amount: float = Field(gt=0)
+    description: str = Field(default="", max_length=200)
+
+
 class BudgetIn(BaseModel):
     category: str = Field(min_length=1, max_length=60)
     monthly_limit: float = Field(ge=0)
@@ -53,6 +59,15 @@ def create_transaction(tx: TransactionIn):
         tx.date, tx.type, tx.category.strip(), tx.amount, tx.description.strip()
     )
     return {"id": new_id}
+
+
+@app.put("/api/transactions/{tx_id}")
+def edit_transaction(tx_id: int, tx: TransactionUpdate):
+    if not database.update_transaction(
+        tx_id, tx.date, tx.amount, tx.description.strip()
+    ):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {"updated": tx_id}
 
 
 @app.delete("/api/transactions/{tx_id}")

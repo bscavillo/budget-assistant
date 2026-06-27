@@ -24,6 +24,10 @@ const I18N = {
     set: "Setzen",
     spendingTitle: "Ausgaben",
     delete: "Löschen",
+    edit: "Bearbeiten",
+    save: "Speichern",
+    cancel: "Abbrechen",
+    transfers: "Buchungen",
     noExpenses: "Noch keine Ausgaben in diesem Zeitraum.",
     noBudgets: "Keine Budgets festgelegt.",
     overBudget: "über Budget",
@@ -52,6 +56,10 @@ const I18N = {
     set: "Set",
     spendingTitle: "Spending",
     delete: "Delete",
+    edit: "Edit",
+    save: "Save",
+    cancel: "Cancel",
+    transfers: "transfers",
     noExpenses: "No expenses in this period yet.",
     noBudgets: "No budgets set.",
     overBudget: "over budget",
@@ -297,29 +305,71 @@ async function loadSummary(isPoll = false) {
     breakdown.appendChild(li);
   }
 
-  renderIncomeBreakdown(summary.income_transactions || []);
+  renderIncomeBreakdown(summary.income_groups || []);
 }
 
-// The smaller side column listing the period's individual income entries.
-function renderIncomeBreakdown(transactions) {
+// The smaller side column listing the period's income, aggregated per sender.
+// A sender with several transfers shows one summed line that expands into its
+// individual transactions; a lone transfer shows as a plain line.
+function renderIncomeBreakdown(groups) {
   const list = el("income-breakdown");
   list.innerHTML = "";
-  if (!transactions.length) {
+  if (!groups.length) {
     list.innerHTML = `<li class="meta">${t("noIncome")}</li>`;
     return;
   }
-  for (const tx of transactions) {
+  for (const group of groups) {
     const li = document.createElement("li");
-    li.className =
-      "flex items-baseline justify-between gap-3 border-b border-line py-2 text-[0.85rem]";
-    li.innerHTML = `
-      <span class="flex min-w-0 flex-1 flex-col">
-        <span class="truncate" title="${escapeHtml(tx.description || "")}">${escapeHtml(tx.description || "—")}</span>
-        <span class="text-xs text-muted">${escapeHtml(tx.date)}</span>
-      </span>
-      <span class="flex-none tabular-nums text-income">${euro.format(tx.amount)}</span>`;
+    li.className = "border-b border-line py-2 text-[0.85rem]";
+    if (group.count > 1) {
+      renderIncomeGroup(li, group);
+    } else {
+      li.appendChild(incomeRow(group.transactions[0]));
+    }
     list.appendChild(li);
   }
+}
+
+// One income transaction line (description + date, amount on the right).
+function incomeRow(tx) {
+  const row = document.createElement("div");
+  row.className = "flex items-baseline justify-between gap-3";
+  row.innerHTML = `
+    <span class="flex min-w-0 flex-1 flex-col">
+      <span class="truncate" title="${escapeHtml(tx.description || "")}">${escapeHtml(tx.description || "—")}</span>
+      <span class="text-xs text-muted">${escapeHtml(tx.date)}</span>
+    </span>
+    <span class="flex-none tabular-nums text-income">${euro.format(tx.amount)}</span>`;
+  return row;
+}
+
+// A collapsed sender total that toggles its individual transfers on click.
+function renderIncomeGroup(li, group) {
+  li.innerHTML = `
+    <div class="flex cursor-pointer items-baseline justify-between gap-3 hover:opacity-90">
+      <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span class="tx-caret flex-none text-muted">▸</span>
+        <span class="flex min-w-0 flex-col">
+          <span class="truncate" title="${escapeHtml(group.sender)}">${escapeHtml(group.sender)}</span>
+          <span class="text-xs text-muted">${group.count} ${t("transfers")}</span>
+        </span>
+      </span>
+      <span class="flex-none tabular-nums text-income">${euro.format(group.total)}</span>
+    </div>
+    <ul class="tx-sublist m-0 mt-2 hidden list-none border-l border-line pl-3"></ul>`;
+  const header = li.querySelector("div");
+  const caret = li.querySelector(".tx-caret");
+  const sublist = li.querySelector(".tx-sublist");
+  for (const tx of group.transactions) {
+    const sli = document.createElement("li");
+    sli.className = "py-1";
+    sli.appendChild(incomeRow(tx));
+    sublist.appendChild(sli);
+  }
+  header.addEventListener("click", () => {
+    const expanded = !sublist.classList.toggle("hidden");
+    caret.textContent = expanded ? "▾" : "▸";
+  });
 }
 
 // Drive the "classifying…" indicator and the background-classification poll.
@@ -489,11 +539,17 @@ function renderCategoryChart(categories) {
   });
 }
 
+// The category whose detail panel is open, so an edit/delete can re-fetch the
+// summary and then re-render the same panel with fresh data.
+let openCategoryName = null;
+
 function hideCategoryDetail() {
   el("category-detail").classList.add("hidden");
+  openCategoryName = null;
 }
 
 function showCategoryDetail(category) {
+  openCategoryName = category.category;
   const panel = el("category-detail");
   el("category-detail-title").textContent =
     t("txForCategory", { category: category.category });
@@ -505,19 +561,79 @@ function showCategoryDetail(category) {
   }
   for (const tx of transactions) {
     const li = document.createElement("li");
-    li.className = "flex justify-between gap-3 border-b border-line py-1.5 text-[0.85rem]";
-    li.innerHTML = `
-      <span class="min-w-0 flex-1 truncate">
-        <span class="text-muted">${escapeHtml(tx.date)}</span>
-        ${escapeHtml(tx.description || "—")}
-      </span>
-      <span class="flex-none">${euro.format(tx.amount)}</span>`;
+    li.className = "border-b border-line py-1.5 text-[0.85rem]";
+    renderTxRow(li, tx, category.category);
     list.appendChild(li);
   }
   panel.classList.remove("hidden");
   // The panel lives up in the Analyse section, but the click may come from the
   // breakdown list further down, so bring it into view.
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// A single read-only transaction row with Edit / Delete actions.
+function renderTxRow(li, tx, categoryName) {
+  li.innerHTML = `
+    <div class="flex items-center justify-between gap-3">
+      <span class="min-w-0 flex-1 truncate">
+        <span class="text-muted">${escapeHtml(tx.date)}</span>
+        ${escapeHtml(tx.description || "—")}
+      </span>
+      <span class="flex flex-none items-center gap-2">
+        <span class="tabular-nums">${euro.format(tx.amount)}</span>
+        <button type="button" class="tx-edit cursor-pointer border-0 bg-transparent px-1 text-muted hover:text-accent">${t("edit")}</button>
+        <button type="button" class="tx-del cursor-pointer border-0 bg-transparent px-1 text-muted hover:text-expense">${t("delete")}</button>
+      </span>
+    </div>`;
+  li.querySelector(".tx-edit").addEventListener("click",
+    () => renderTxEditRow(li, tx, categoryName));
+  li.querySelector(".tx-del").addEventListener("click",
+    () => deleteTx(tx.id, categoryName));
+}
+
+// The same row turned into an inline date / description / amount edit form.
+function renderTxEditRow(li, tx, categoryName) {
+  li.innerHTML = `
+    <form class="flex flex-wrap items-center gap-2">
+      <input type="date" class="field flex-none px-1.5 py-1 text-xs" value="${escapeHtml(tx.date)}" required />
+      <input type="text" class="field min-w-0 flex-1 px-1.5 py-1 text-xs" value="${escapeHtml(tx.description || "")}" maxlength="200" />
+      <input type="number" class="field w-24 flex-none px-1.5 py-1 text-xs" value="${tx.amount}" min="0" step="0.01" required />
+      <button type="submit" class="btn flex-none px-2 py-1 text-xs">${t("save")}</button>
+      <button type="button" class="tx-cancel flex-none cursor-pointer border-0 bg-transparent px-1 text-xs text-muted hover:text-ink">${t("cancel")}</button>
+    </form>`;
+  const form = li.querySelector("form");
+  const [dateIn, descIn, amountIn] = form.querySelectorAll("input");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveTx(tx.id, {
+      date: dateIn.value,
+      description: descIn.value.trim(),
+      amount: parseFloat(amountIn.value),
+    }, categoryName);
+  });
+  form.querySelector(".tx-cancel").addEventListener("click",
+    () => renderTxRow(li, tx, categoryName));
+}
+
+async function saveTx(id, body, categoryName) {
+  await api(`/api/transactions/${id}`, { method: "PUT", body: JSON.stringify(body) });
+  await loadSummary();
+  reopenCategoryDetail(categoryName);
+}
+
+async function deleteTx(id, categoryName) {
+  await api(`/api/transactions/${id}`, { method: "DELETE" });
+  await loadSummary();
+  reopenCategoryDetail(categoryName);
+}
+
+// Re-open the detail panel for a category after the summary was re-fetched, so
+// edits/deletes show fresh data. If the category no longer has any rows (its
+// last transaction was deleted) the panel just closes.
+function reopenCategoryDetail(name) {
+  const cat = (lastCategories || []).find((c) => c.category === name);
+  if (cat) showCategoryDetail(cat);
+  else hideCategoryDetail();
 }
 
 // --- Events ---------------------------------------------------------------

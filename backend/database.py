@@ -90,6 +90,27 @@ def add_transaction(tx_date, tx_type, category, amount, description):
         return cursor.lastrowid
 
 
+def update_transaction(tx_id, tx_date, amount, description):
+    """Edit a single transaction's date, amount and shown label.
+
+    ``merchant`` is set alongside ``description`` because the UI displays
+    ``merchant or description`` — keeping them in sync makes the user's edited
+    text the label that actually shows. The raw ``category`` and the AI-assigned
+    ``std_category`` are left untouched, so an edit never silently re-buckets a
+    transaction. Returns True if a row was updated.
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE transactions
+            SET date = ?, amount = ?, description = ?, merchant = ?
+            WHERE id = ?
+            """,
+            (tx_date, amount, description, description, tx_id),
+        )
+        return cursor.rowcount > 0
+
+
 def delete_transaction(tx_id):
     with get_connection() as conn:
         cursor = conn.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
@@ -392,6 +413,42 @@ def period_summary(period=None):
         "expense": round(expense, 2),
         "balance": round(income - expense, 2),
         "categories": categories,
-        "income_transactions": income_transactions,
+        "income_groups": _group_income(income_transactions),
         "unclassified_count": unclassified_count,
     }
+
+
+def _income_sender(description):
+    """The sender an income row is grouped under.
+
+    Imports store income as ``"<party> - <purpose>"``, so the party (the sender)
+    is the segment before the first ``" - "``. Falls back to the whole text when
+    there is no separator, and to a dash when there is nothing at all.
+    """
+    text = (description or "").strip()
+    if not text:
+        return "—"
+    return text.split(" - ", 1)[0].strip() or text
+
+
+def _group_income(income_transactions):
+    """Collapse income into one entry per sender.
+
+    Returns a list of ``{sender, total, count, transactions}`` sorted by total
+    descending, so repeated transfers from the same payer show as a single
+    summed line that can be expanded into its individual transactions. The
+    per-sender transactions keep the amount-descending order they arrive in.
+    """
+    groups = {}
+    for tx in income_transactions:
+        sender = _income_sender(tx["description"])
+        group = groups.setdefault(
+            sender, {"sender": sender, "total": 0.0, "transactions": []})
+        group["total"] += tx["amount"]
+        group["transactions"].append(tx)
+
+    ordered = sorted(groups.values(), key=lambda g: g["total"], reverse=True)
+    for group in ordered:
+        group["total"] = round(group["total"], 2)
+        group["count"] = len(group["transactions"])
+    return ordered
