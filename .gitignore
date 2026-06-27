@@ -5,7 +5,6 @@ __pycache__/
 venv/
 env/
 
-# Local database (contains personal financial data)
 backend/budget.db
 
 # Editor / OS

@@ -1,9 +1,9 @@
-"""Parser for Postbank account-statement CSV exports.
+"""Parser for German bank account-statement CSV exports.
 
-Postbank's CSV format has changed over the years (especially after the
-Deutsche Bank migration), so this parser is deliberately tolerant: it
-auto-detects the encoding, the delimiter, the header row, and maps columns by
-matching German header keywords rather than fixed positions.
+German banks vary their CSV layout (and individual banks have changed theirs
+over the years), so this parser is deliberately tolerant: it auto-detects the
+encoding, the delimiter, the header row, and maps columns by matching German
+header keywords rather than fixed positions.
 
 Amounts use the German convention (``1.234,56``) and dates ``DD.MM.YYYY``.
 """
@@ -15,14 +15,14 @@ from datetime import datetime
 
 # Header keywords (lower-case, accent-insensitive) used to locate columns.
 DATE_KEYS = ("buchungstag", "buchungsdatum", "datum", "wertstellung")
-# "betrag" is the canonical Postbank amount header. "umsatz" is a fallback for
-# other layouts, but must not collide with the "umsatzart" type column.
+# "betrag" is the canonical amount header. "umsatz" is a fallback for other
+# layouts, but must not collide with the "umsatzart" type column.
 AMOUNT_KEYS = ("betrag",)
 PURPOSE_KEYS = ("verwendungszweck", "buchungsdetails", "buchungstext", "vorgang")
 PARTY_KEYS = ("auftraggeber", "empfanger", "empfaenger", "begunstigter",
               "beguenstigter", "name", "zahlungsbeteiligter")
 TYPE_KEYS = ("umsatzart", "buchungsart")
-# Some Postbank exports split direction into separate debit/credit columns.
+# Some exports split direction into separate debit/credit columns.
 DEBIT_KEYS = ("soll",)
 CREDIT_KEYS = ("haben",)
 
@@ -38,7 +38,7 @@ def _normalize(text):
 
 
 def _decode(raw):
-    """Decode bytes trying the encodings Postbank exports actually use."""
+    """Decode bytes trying the encodings German bank exports actually use."""
     for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             return raw.decode(encoding)
@@ -120,7 +120,7 @@ def _parse_date(value):
 
 
 def parse(raw_bytes):
-    """Parse Postbank CSV bytes into a list of transaction dicts.
+    """Parse German bank CSV bytes into a list of transaction dicts.
 
     Each dict has keys: ``date``, ``type``, ``category``, ``amount``,
     ``description``. Rows that can't be parsed (no valid date or amount) are

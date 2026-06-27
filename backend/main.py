@@ -11,9 +11,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import csv_import
 import database
 import ollama_service
-import postbank_import
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -183,12 +183,12 @@ def _ingest(parsed, background):
     return {"parsed": len(parsed), "imported": imported, "skipped": skipped}
 
 
-@app.post("/api/import/postbank")
-async def import_postbank(background: BackgroundTasks, file: UploadFile = File(...)):
-    """Import transactions from a Postbank CSV export."""
+@app.post("/api/import/csv")
+async def import_csv(background: BackgroundTasks, file: UploadFile = File(...)):
+    """Import transactions from a German bank CSV export."""
     raw = await file.read()
     try:
-        parsed = postbank_import.parse(raw)
+        parsed = csv_import.parse(raw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _ingest(parsed, background)
