@@ -39,6 +39,9 @@ class TransactionUpdate(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     amount: float = Field(gt=0)
     description: str = Field(default="", max_length=200)
+    # Empty string means "leave/move to Unclassified"; any other value must be
+    # one of the canonical spending categories (validated in the endpoint).
+    category: str = Field(default="", max_length=60)
 
 
 class BudgetIn(BaseModel):
@@ -63,8 +66,11 @@ def create_transaction(tx: TransactionIn):
 
 @app.put("/api/transactions/{tx_id}")
 def edit_transaction(tx_id: int, tx: TransactionUpdate):
+    category = tx.category.strip()
+    if category and category not in ollama_service.STANDARD_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Unknown category")
     if not database.update_transaction(
-        tx_id, tx.date, tx.amount, tx.description.strip()
+        tx_id, tx.date, tx.amount, tx.description.strip(), category or None
     ):
         raise HTTPException(status_code=404, detail="Transaction not found")
     return {"updated": tx_id}

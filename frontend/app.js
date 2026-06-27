@@ -27,6 +27,7 @@ const I18N = {
     edit: "Bearbeiten",
     save: "Speichern",
     cancel: "Abbrechen",
+    unclassified: "Nicht kategorisiert",
     transfers: "Buchungen",
     noExpenses: "Noch keine Ausgaben in diesem Zeitraum.",
     noBudgets: "Keine Budgets festgelegt.",
@@ -59,6 +60,7 @@ const I18N = {
     edit: "Edit",
     save: "Save",
     cancel: "Cancel",
+    unclassified: "Unclassified",
     transfers: "transfers",
     noExpenses: "No expenses in this period yet.",
     noBudgets: "No budgets set.",
@@ -413,10 +415,15 @@ async function loadBudgets() {
   }
 }
 
+// The canonical spending categories, cached so the per-transaction edit form
+// can offer the same vocabulary as budgets and AI classification.
+let standardCategories = [];
+
 // Populate the budget category dropdown from the canonical category list so
 // budgets always use the same vocabulary as the AI classification.
 async function loadCategories() {
   const { categories } = await api("/api/categories");
+  standardCategories = categories;
   const select = el("budget-category");
   select.innerHTML = "";
   for (const c of categories) {
@@ -591,24 +598,37 @@ function renderTxRow(li, tx, categoryName) {
     () => deleteTx(tx.id, categoryName));
 }
 
-// The same row turned into an inline date / description / amount edit form.
+// The same row turned into an inline date / description / category / amount form.
 function renderTxEditRow(li, tx, categoryName) {
+  // Preselect the row's current bucket; "" is the Unclassified option, chosen
+  // when the bucket isn't a canonical category so an amount-only edit doesn't
+  // accidentally classify the row.
+  const current = standardCategories.includes(categoryName) ? categoryName : "";
+  const options = [`<option value=""${current === "" ? " selected" : ""}>${t("unclassified")}</option>`]
+    .concat(standardCategories.map((c) =>
+      `<option value="${escapeHtml(c)}"${c === current ? " selected" : ""}>${escapeHtml(c)}</option>`))
+    .join("");
   li.innerHTML = `
     <form class="flex flex-wrap items-center gap-2">
       <input type="date" class="field flex-none px-1.5 py-1 text-xs" value="${escapeHtml(tx.date)}" required />
       <input type="text" class="field min-w-0 flex-1 px-1.5 py-1 text-xs" value="${escapeHtml(tx.description || "")}" maxlength="200" />
+      <select class="tx-cat field flex-none px-1.5 py-1 text-xs">${options}</select>
       <input type="number" class="field w-24 flex-none px-1.5 py-1 text-xs" value="${tx.amount}" min="0" step="0.01" required />
       <button type="submit" class="btn flex-none px-2 py-1 text-xs">${t("save")}</button>
       <button type="button" class="tx-cancel flex-none cursor-pointer border-0 bg-transparent px-1 text-xs text-muted hover:text-ink">${t("cancel")}</button>
     </form>`;
   const form = li.querySelector("form");
-  const [dateIn, descIn, amountIn] = form.querySelectorAll("input");
+  const dateIn = form.querySelector('input[type="date"]');
+  const descIn = form.querySelector('input[type="text"]');
+  const amountIn = form.querySelector('input[type="number"]');
+  const catIn = form.querySelector(".tx-cat");
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     saveTx(tx.id, {
       date: dateIn.value,
       description: descIn.value.trim(),
       amount: parseFloat(amountIn.value),
+      category: catIn.value,
     }, categoryName);
   });
   form.querySelector(".tx-cancel").addEventListener("click",

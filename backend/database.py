@@ -90,23 +90,24 @@ def add_transaction(tx_date, tx_type, category, amount, description):
         return cursor.lastrowid
 
 
-def update_transaction(tx_id, tx_date, amount, description):
-    """Edit a single transaction's date, amount and shown label.
+def update_transaction(tx_id, tx_date, amount, description, std_category):
+    """Edit a single transaction's date, amount, label and spending category.
 
     ``merchant`` is set alongside ``description`` because the UI displays
     ``merchant or description`` — keeping them in sync makes the user's edited
-    text the label that actually shows. The raw ``category`` and the AI-assigned
-    ``std_category`` are left untouched, so an edit never silently re-buckets a
-    transaction. Returns True if a row was updated.
+    text the label that actually shows. ``std_category`` is the bucket the row
+    falls into (``None`` puts it back in the "Unclassified" bucket); the raw
+    bank ``category`` is left untouched. Returns True if a row was updated.
     """
     with get_connection() as conn:
         cursor = conn.execute(
             """
             UPDATE transactions
-            SET date = ?, amount = ?, description = ?, merchant = ?
+            SET date = ?, amount = ?, description = ?, merchant = ?,
+                std_category = ?
             WHERE id = ?
             """,
-            (tx_date, amount, description, description, tx_id),
+            (tx_date, amount, description, description, std_category, tx_id),
         )
         return cursor.rowcount > 0
 
