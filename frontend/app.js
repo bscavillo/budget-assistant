@@ -17,7 +17,7 @@ const I18N = {
     analysis: "Analyse",
     byCategory: "Ausgaben nach Kategorie",
     trendTitle: "Verlauf (Einnahmen / Ausgaben)",
-    importTitle: "Transaktionen importieren",
+    importTitle: "Aus Postbank importieren",
     importBtn: "CSV importieren",
     budgetsTitle: "Kategorie-Budgets",
     monthlyLimit: "Monatslimit €",
@@ -45,7 +45,7 @@ const I18N = {
     analysis: "Analysis",
     byCategory: "Spending by category",
     trendTitle: "Trend (income / expenses)",
-    importTitle: "Import transactions",
+    importTitle: "Import from Postbank",
     importBtn: "Import CSV",
     budgetsTitle: "Category budgets",
     monthlyLimit: "Monthly limit €",
@@ -553,8 +553,7 @@ el("import-form").addEventListener("submit", async (e) => {
   try {
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
-    const source = el("import-source").value; // "postbank" | "wells-fargo"
-    const res = await fetch(`/api/import/${source}`, { method: "POST", body: formData });
+    const res = await fetch("/api/import/postbank", { method: "POST", body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Import failed");
     status.textContent = t("importResult", data);

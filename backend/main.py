@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 import database
 import ollama_service
 import postbank_import
-import wells_fargo_import
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -190,17 +189,6 @@ async def import_postbank(background: BackgroundTasks, file: UploadFile = File(.
     raw = await file.read()
     try:
         parsed = postbank_import.parse(raw)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return _ingest(parsed, background)
-
-
-@app.post("/api/import/wells-fargo")
-async def import_wells_fargo(background: BackgroundTasks, file: UploadFile = File(...)):
-    """Import transactions from a Wells Fargo CSV export."""
-    raw = await file.read()
-    try:
-        parsed = wells_fargo_import.parse(raw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _ingest(parsed, background)
