@@ -175,8 +175,13 @@ async function loadDateCoverage() {
 
 function populateYearOptions() {
   const now = new Date().getFullYear();
+  // Show every year from the current one back to the earliest that has data, so
+  // empty years never clutter the picker. Falls back to the current year alone
+  // when no coverage has loaded yet (setMonthYear still adds any missing year).
+  const dataYears = [...yearLatestMonth.keys()].map(Number);
+  const earliest = dataYears.length ? Math.min(now, ...dataYears) : now;
   yearSelect.innerHTML = "";
-  for (let y = now; y >= now - 6; y--) {
+  for (let y = now; y >= earliest; y--) {
     const opt = document.createElement("option");
     opt.value = String(y);
     opt.textContent = String(y);
@@ -558,14 +563,16 @@ el("import-form").addEventListener("submit", async (e) => {
     if (!res.ok) throw new Error(data.detail || "Import failed");
     status.textContent = t("importResult", data);
     e.target.reset();
+    // Imported rows may extend coverage (a new earliest year, or a year that
+    // now reaches December), so refresh coverage and rebuild the year picker
+    // and whole-period choice before jumping to the freshly imported data.
+    await loadDateCoverage();
+    populateYearOptions();
     // Jump to the latest month so the freshly imported data is visible.
     try {
       const { month } = await api("/api/latest-month");
       if (month) setMonthYear(month);
     } catch (_) { /* ignore */ }
-    // Imported rows may complete a year (or extend it), so refresh coverage
-    // and rebuild the whole-period choice for the now-selected year.
-    await loadDateCoverage();
     populateMonthOptions();
     await refreshAll();
   } catch (err) {
@@ -593,9 +600,12 @@ yearSelect.addEventListener("change", () => {
 // --- Init -----------------------------------------------------------------
 
 async function init() {
-  populateYearOptions();
   applyTranslations();
   loadCategories();
+  // Coverage drives which years have data (the year picker) and the full-year
+  // vs. year-to-date choice (the month options), so load it before both.
+  await loadDateCoverage();
+  populateYearOptions();
   setMonthYear(new Date().toISOString().slice(0, 7));
   try {
     const { month } = await api("/api/latest-month");
@@ -603,9 +613,6 @@ async function init() {
   } catch (_) {
     /* fall back to the current month */
   }
-  // Coverage decides full-year vs. year-to-date, so load it before rebuilding
-  // the month options for the now-selected year.
-  await loadDateCoverage();
   populateMonthOptions();
   refreshAll();
 }
