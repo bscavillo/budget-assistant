@@ -134,9 +134,19 @@
         </div>
       </section>
     </div>
+
+    <section class="mb-6 rounded-xl border border-line bg-panel px-6 py-5">
+      <h2 class="m-0 mb-1 text-[1.05rem]" data-i18n="chatTitle">Finanz-Chat</h2>
+      <p class="meta mb-3" data-i18n="chatSubtitle">Fragen zu deinen Finanzen – lokal von Ollama beantwortet.</p>
+      <div id="chat-messages" class="mb-3 flex max-h-[440px] min-h-[120px] flex-col gap-3 overflow-y-auto pr-1"></div>
+      <form id="chat-form" class="flex items-end gap-3">
+        <textarea id="chat-input" rows="1" class="field min-h-0 flex-1 resize-none" data-i18n-placeholder="chatPlaceholder" placeholder="Frage zu deinen Finanzen …" maxlength="1000"></textarea>
+        <button type="submit" class="btn flex-none" data-i18n="chatSend">Senden</button>
+      </form>
+    </section>
   </main>
 
   <script src="/static/vendor/chart.umd.min.js"></script>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

@@ -118,6 +118,19 @@ def delete_transaction(tx_id):
         return cursor.rowcount > 0
 
 
+def get_transaction(tx_id):
+    """Return a single transaction as a dict, or None if it does not exist.
+
+    Used by the chat assistant to look up a row before proposing or applying a
+    fix, so a change is only ever built on the transaction's real current state.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM transactions WHERE id = ?", (tx_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def transaction_exists(tx_date, tx_type, amount, description):
     """Return True if an identical transaction is already stored.
 
@@ -258,6 +271,63 @@ def months_with_data():
             "ORDER BY month"
         ).fetchall()
         return [row["month"] for row in rows]
+
+
+# --- Chat retrieval -------------------------------------------------------
+
+def search_transactions(terms, limit=40):
+    """Return transactions whose payee text matches any of ``terms``.
+
+    Powers retrieval for the finance chat: given the keywords from a user's
+    question, it pulls the matching rows from across *all* imported data (not
+    just the selected period) so the assistant can answer about — and offer to
+    fix — a transaction the user describes ("the REWE payment last Tuesday").
+    Each term is matched case-insensitively against both the raw description and
+    the cleaned merchant name. Returns newest first, capped at ``limit``.
+    """
+    terms = [term for term in (terms or []) if term]
+    if not terms:
+        return []
+    clauses = []
+    params = []
+    for term in terms:
+        clauses.append("(description LIKE ? OR merchant LIKE ?)")
+        like = f"%{term}%"
+        params.extend([like, like])
+    params.append(limit)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM transactions
+            WHERE {' OR '.join(clauses)}
+            ORDER BY date DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def period_transactions(period=None, limit=80):
+    """Return the transactions in a reporting period, newest first (capped).
+
+    Gives the chat assistant the full picture of the period currently on screen
+    so it can answer "what did I spend this month on…" without the user having
+    to name a specific merchant. ``period`` accepts the formats in
+    ``_period_clause``.
+    """
+    condition, params = _period_clause(period)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM transactions
+            WHERE {condition}
+            ORDER BY date DESC, id DESC
+            LIMIT ?
+            """,
+            [*params, limit],
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def monthly_totals(months=6, anchor=None):

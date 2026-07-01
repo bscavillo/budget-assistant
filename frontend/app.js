@@ -42,6 +42,23 @@ const I18N = {
     fullYear: "Ganzes Jahr",
     yearToDate: "Bisher dieses Jahr",
     noIncome: "Noch keine Einnahmen in diesem Zeitraum.",
+    chatTitle: "Finanz-Chat",
+    chatSubtitle: "Fragen zu deinen Finanzen – lokal von Ollama beantwortet.",
+    chatPlaceholder: "Frage zu deinen Finanzen …",
+    chatSend: "Senden",
+    chatEmpty: "Stelle eine Frage zu deinen Ausgaben – oder bitte um eine Korrektur, z. B. „Buche die REWE-Zahlung vom 3. auf den 5. Juni um“.",
+    chatThinking: "Denkt nach …",
+    chatError: "Ollama ist nicht erreichbar. Läuft der lokale Server?",
+    chatProposed: "Vorgeschlagene Änderung:",
+    chatUpdateAction: "Transaktion ändern",
+    chatDeleteAction: "Transaktion löschen",
+    chatApply: "Übernehmen",
+    chatApplied: "Übernommen ✓",
+    chatApplyError: "Konnte nicht übernommen werden.",
+    fieldDate: "Datum",
+    fieldAmount: "Betrag",
+    fieldDescription: "Bezeichnung",
+    fieldCategory: "Kategorie",
   },
   en: {
     income: "Income",
@@ -75,6 +92,23 @@ const I18N = {
     fullYear: "Full year",
     yearToDate: "Year to date",
     noIncome: "No income in this period yet.",
+    chatTitle: "Finance chat",
+    chatSubtitle: "Ask about your finances – answered locally by Ollama.",
+    chatPlaceholder: "Ask about your finances …",
+    chatSend: "Send",
+    chatEmpty: "Ask a question about your spending – or request a fix, e.g. “move the REWE payment from the 3rd to the 5th of June”.",
+    chatThinking: "Thinking …",
+    chatError: "Ollama is unreachable. Is the local server running?",
+    chatProposed: "Proposed change:",
+    chatUpdateAction: "Edit transaction",
+    chatDeleteAction: "Delete transaction",
+    chatApply: "Apply",
+    chatApplied: "Applied ✓",
+    chatApplyError: "Could not apply.",
+    fieldDate: "Date",
+    fieldAmount: "Amount",
+    fieldDescription: "Label",
+    fieldCategory: "Category",
   },
 };
 
@@ -128,6 +162,7 @@ function setLang(next) {
   localStorage.setItem("lang", lang);
   applyTranslations();
   refreshAll();
+  renderChat();
   if (lastTrend) renderTrendChart(lastTrend);
   if (lastCategories) renderCategoryChart(lastCategories);
 }
@@ -656,6 +691,134 @@ function reopenCategoryDetail(name) {
   else hideCategoryDetail();
 }
 
+// --- Finance chat ---------------------------------------------------------
+
+// The running conversation. Each entry is {role, content} plus, for assistant
+// turns that propose fixes, an `actions` array; a transient "thinking" bubble
+// carries `pending: true` and is swapped out for the real reply on arrival.
+const chatMessages = [];
+
+// Which change key maps to which translated field label / snapshot field.
+const CHAT_FIELDS = {
+  date: "fieldDate",
+  amount: "fieldAmount",
+  description: "fieldDescription",
+  category: "fieldCategory",
+};
+
+function formatChatField(key, value) {
+  if (key === "amount") return euro.format(Number(value) || 0);
+  if (key === "category") return value ? value : t("unclassified");
+  return value === undefined || value === null || value === "" ? "—" : String(value);
+}
+
+function renderChat() {
+  const box = el("chat-messages");
+  box.innerHTML = "";
+  if (!chatMessages.length) {
+    box.innerHTML = `<p class="meta">${escapeHtml(t("chatEmpty"))}</p>`;
+    return;
+  }
+  for (const msg of chatMessages) box.appendChild(renderChatMessage(msg));
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderChatMessage(msg) {
+  const isUser = msg.role === "user";
+  const wrap = document.createElement("div");
+  wrap.className = `flex flex-col ${isUser ? "items-end" : "items-start"}`;
+
+  const bubble = document.createElement("div");
+  bubble.className = isUser
+    ? "max-w-[85%] whitespace-pre-wrap rounded-lg bg-accent px-3 py-2 text-sm text-[#06283d]"
+    : `max-w-[85%] whitespace-pre-wrap rounded-lg bg-panel-soft px-3 py-2 text-sm ${msg.pending ? "text-muted" : "text-ink"}`;
+  bubble.textContent = msg.content;
+  wrap.appendChild(bubble);
+
+  for (const action of msg.actions || []) {
+    wrap.appendChild(renderActionCard(action));
+  }
+  return wrap;
+}
+
+// A proposed fix rendered as a confirmable card: what it touches, the concrete
+// before → after changes, and an Apply button that only then writes to the DB.
+function renderActionCard(action) {
+  const card = document.createElement("div");
+  card.className = "mt-2 w-[85%] rounded-lg border border-line bg-panel px-3 py-2 text-sm";
+  const cur = action.current || {};
+  const title = action.type === "delete" ? t("chatDeleteAction") : t("chatUpdateAction");
+
+  let body = `<div class="text-muted mb-1">${escapeHtml(cur.description || "—")} · ${escapeHtml(cur.date || "")} · ${euro.format(cur.amount || 0)}</div>`;
+  if (action.type === "update") {
+    body += Object.entries(action.changes || {}).map(([key, value]) =>
+      `<div><span class="text-muted">${escapeHtml(t(CHAT_FIELDS[key] || key))}:</span> `
+      + `${escapeHtml(formatChatField(key, cur[key]))} → `
+      + `<span class="text-ink">${escapeHtml(formatChatField(key, value))}</span></div>`
+    ).join("");
+  }
+
+  card.innerHTML = `<div class="mb-1 font-semibold">${escapeHtml(title)}</div>${body}`;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn mt-2 px-2 py-1 text-xs disabled:cursor-default disabled:opacity-60";
+  btn.textContent = action.applied ? t("chatApplied") : t("chatApply");
+  btn.disabled = !!action.applied;
+  btn.addEventListener("click", () => applyChatAction(action, btn, card));
+  card.appendChild(btn);
+  return card;
+}
+
+async function applyChatAction(action, btn, card) {
+  btn.disabled = true;
+  card.querySelector(".chat-apply-error")?.remove();
+  try {
+    await api("/api/chat/apply", {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    action.applied = true;
+    btn.textContent = t("chatApplied");
+    // The ledger changed, so refresh the cards, charts and breakdowns.
+    await refreshAll();
+  } catch (_) {
+    btn.disabled = false;
+    const err = document.createElement("div");
+    err.className = "chat-apply-error mt-1 text-xs text-expense";
+    err.textContent = t("chatApplyError");
+    card.appendChild(err);
+  }
+}
+
+async function sendChat(text) {
+  chatMessages.push({ role: "user", content: text });
+  const thinking = { role: "assistant", content: t("chatThinking"), pending: true };
+  chatMessages.push(thinking);
+  renderChat();
+
+  try {
+    const payload = {
+      messages: chatMessages
+        .filter((m) => !m.pending)
+        .map((m) => ({ role: m.role, content: m.content })),
+      period: currentPeriod(),
+    };
+    const res = await api("/api/chat", { method: "POST", body: JSON.stringify(payload) });
+    const reply = (res.reply || "").trim()
+      || (res.actions && res.actions.length ? t("chatProposed") : "…");
+    replaceMessage(thinking, { role: "assistant", content: reply, actions: res.actions || [] });
+  } catch (_) {
+    replaceMessage(thinking, { role: "assistant", content: t("chatError") });
+  }
+  renderChat();
+}
+
+function replaceMessage(target, next) {
+  const idx = chatMessages.indexOf(target);
+  if (idx !== -1) chatMessages.splice(idx, 1, next);
+  else chatMessages.push(next);
+}
+
 // --- Events ---------------------------------------------------------------
 
 el("lang-switch").addEventListener("click", (e) => {
@@ -718,6 +881,28 @@ el("import-form").addEventListener("submit", async (e) => {
 
 el("category-detail-close").addEventListener("click", hideCategoryDetail);
 
+el("chat-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = el("chat-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  input.style.height = "auto";
+  sendChat(text);
+});
+
+// Enter sends, Shift+Enter inserts a newline; the box grows with its content.
+el("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    el("chat-form").requestSubmit();
+  }
+});
+el("chat-input").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+});
+
 function onMonthYearChange() {
   // loadSummary classifies (if needed), renders the chart and breakdown;
   // loadTrend re-anchors the trend line on the newly selected period.
@@ -751,6 +936,7 @@ async function init() {
   }
   populateMonthOptions();
   refreshAll();
+  renderChat();
 }
 
 init();

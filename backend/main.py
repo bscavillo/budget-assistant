@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import chat_service
 import csv_import
 import database
 import ollama_service
@@ -47,6 +48,25 @@ class TransactionUpdate(BaseModel):
 class BudgetIn(BaseModel):
     category: str = Field(min_length=1, max_length=60)
     monthly_limit: float = Field(ge=0)
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class ChatIn(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    # The period currently on screen, so the assistant answers about the same
+    # data the user is looking at. Same formats as the summary endpoint.
+    period: str | None = None
+
+
+class ChatApplyIn(BaseModel):
+    # A fix proposed by /api/chat and confirmed by the user. Kept loosely typed
+    # (the shape is validated in chat_service.apply_action against the real row)
+    # so the client can hand back the action object it received unchanged.
+    action: dict
 
 
 # --- Transactions ---------------------------------------------------------
@@ -128,6 +148,32 @@ def get_summary(period: str | None = None, *, background: BackgroundTasks):
 def get_categories():
     """The canonical spending categories used for classification and budgets."""
     return {"categories": ollama_service.STANDARD_CATEGORIES}
+
+
+@app.post("/api/chat")
+def chat(body: ChatIn):
+    """Answer a finance question (RAG over the user's data) or propose a fix.
+
+    The reply and any proposed fixes are returned; nothing is written to the
+    database here — fixes are applied only via ``/api/chat/apply`` after the
+    user confirms them. Returns 503 when the local Ollama model is unreachable.
+    """
+    result = chat_service.answer(
+        [m.model_dump() for m in body.messages], body.period)
+    if result.get("unavailable"):
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is unavailable. Is the local server running?")
+    return result
+
+
+@app.post("/api/chat/apply")
+def chat_apply(body: ChatApplyIn):
+    """Apply a single fix that the user confirmed from the chat."""
+    try:
+        return chat_service.apply_action(body.action)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/trend")
